@@ -138,10 +138,292 @@ impl BaseStats {
 }
 
 impl Savegame {
+    pub fn load_from_file(path: impl AsRef<Path>) -> Result<Self> {
+        let char_file = CharacterFile::load(path)?;
+
+        let header = char_file.header();
+        let class = header.class.unwrap_or(CharacterClass::Amazon);
+        let name = header.name.clone();
+
+        // Parse skills
+        let mut skills = [0; 30];
+        if let Some(char_skills) = char_file.skills() {
+            skills.copy_from_slice(&char_skills.levels);
+        }
+
+        let raw_bytes = char_file.to_bytes();
+        let mut quests = [[0u16; 41]; 3];
+        // Parse quests from raw_bytes. Look for "Woo!"
+        if let Some(woo_idx) = raw_bytes.windows(4).position(|window| window == b"Woo!") {
+            let mut offset = woo_idx + 10; // Skip 10 byte header
+            for diff in 0..3 {
+                if offset + 96 <= raw_bytes.len() {
+                    for i in 0..41 {
+                        let b1 = raw_bytes[offset + i * 2] as u16;
+                        let b2 = raw_bytes[offset + i * 2 + 1] as u16;
+                        quests[diff][i] = b1 | (b2 << 8);
+                    }
+                    offset += 96;
+                }
+            }
+        }
+
+        let mut waypoints = [[false; 39]; 3];
+        if let Some(ws_idx) = raw_bytes.windows(2).position(|window| window == b"WS") {
+            let mut offset = ws_idx + 8; // Skip WS, unknown, and length
+            for diff in 0..3 {
+                if offset + 24 <= raw_bytes.len() {
+                    // Each diff block is 24 bytes: 2 bytes header (0x02 0x01) + 22 bytes data
+                    let data_offset = offset + 2;
+                    for i in 0..39 {
+                        let byte_idx = i / 8;
+                        let bit_idx = i % 8;
+                        waypoints[diff][i] =
+                            (raw_bytes[data_offset + byte_idx] & (1 << bit_idx)) != 0;
+                    }
+                    offset += 24;
+                }
+            }
+        }
+
+        let savegame = Self {
+            name,
+            class,
+            level: char_file.stat(CharacterStat::Level).unwrap_or(1),
+            experience: char_file.stat(CharacterStat::Experience).unwrap_or(0),
+            gold: char_file.stat(CharacterStat::Gold).unwrap_or(0),
+            stashed_gold: char_file.stat(CharacterStat::StashedGold).unwrap_or(0),
+            strength: char_file
+                .stat(CharacterStat::Strength)
+                .unwrap_or_else(|| BaseStats::for_class(class).str),
+            dexterity: char_file
+                .stat(CharacterStat::Dexterity)
+                .unwrap_or_else(|| BaseStats::for_class(class).dex),
+            vitality: char_file
+                .stat(CharacterStat::Vitality)
+                .unwrap_or_else(|| BaseStats::for_class(class).vit),
+            energy: char_file
+                .stat(CharacterStat::Energy)
+                .unwrap_or_else(|| BaseStats::for_class(class).eng),
+            stat_points_remaining: char_file.stat(CharacterStat::StatPoints).unwrap_or(0),
+            skill_points_remaining: char_file.stat(CharacterStat::SkillPoints).unwrap_or(0),
+            current_hp: char_file
+                .stat(CharacterStat::HitPoints)
+                .unwrap_or_else(|| BaseStats::for_class(class).hp << 8)
+                >> 8,
+            max_hp: char_file
+                .stat(CharacterStat::MaxHitPoints)
+                .unwrap_or_else(|| BaseStats::for_class(class).hp << 8)
+                >> 8,
+            current_mana: char_file
+                .stat(CharacterStat::Mana)
+                .unwrap_or_else(|| BaseStats::for_class(class).mana << 8)
+                >> 8,
+            max_mana: char_file
+                .stat(CharacterStat::MaxMana)
+                .unwrap_or_else(|| BaseStats::for_class(class).mana << 8)
+                >> 8,
+            current_stamina: char_file
+                .stat(CharacterStat::Stamina)
+                .unwrap_or_else(|| BaseStats::for_class(class).stamina << 8)
+                >> 8,
+            max_stamina: char_file
+                .stat(CharacterStat::MaxStamina)
+                .unwrap_or_else(|| BaseStats::for_class(class).stamina << 8)
+                >> 8,
+            skills,
+            raw_bytes,
+            char_file: Some(char_file.clone()),
+            quests,
+            hardcore: header.status.hardcore,
+            died: header.status.died,
+            waypoints,
+        };
+
+        Ok(savegame)
+    }
+
+    pub fn generate_template(class: CharacterClass) -> Self {
+        let base = BaseStats::for_class(class);
+        let name = format!("Temp{}", class); // shorter name
+
+        let mut raw = vec![0u8; 0x2fd];
+        raw[0..4].copy_from_slice(&0xaa55_aa55_u32.to_le_bytes()); // D2S_MAGIC
+        raw[4..8].copy_from_slice(&0x60_u32.to_le_bytes()); // VERSION_OFFSET
+        raw[0x28] = class as u8; // LEGACY_CLASS_OFFSET
+        raw[0x2b] = 99; // LEGACY_LEVEL_OFFSET
+        raw[0x24] = 0x20; // Status: Expansion (1 << 5)
+
+        let name_bytes = name.as_bytes();
+        let len = name_bytes.len().min(15);
+        raw[0x14..0x14 + len].copy_from_slice(&name_bytes[..len]);
+
+        // Emulate `build_legacy_fixed_pre_stats_block` criticals
+        raw[0x29] = 0x10;
+        raw[0x2a] = 0x1e;
+        raw[0x34..0x38].fill(0xff);
+
+        // Quests
+        raw[0x14b] = 1;
+        raw[0x14f..0x153].copy_from_slice(b"Woo!");
+        raw[0x153..0x159].copy_from_slice(&[0x06, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+        // Waypoints
+        raw[0x279..0x279 + 2].copy_from_slice(b"WS");
+        raw[0x279 + 2..0x279 + 6].copy_from_slice(&[0x01, 0x00, 0x00, 0x00]);
+        raw[0x279 + 6..0x279 + 8].copy_from_slice(&[0x50, 0x00]); // 80 bytes len
+
+        // NPC
+        raw[0x2cd..0x2cd + 2].copy_from_slice(b"w4");
+        raw[0x2cd + 2..0x2cd + 4].copy_from_slice(&[0x34, 0x00]); // 52 bytes len
+
+        Self {
+            name,
+            class,
+            level: 99,
+            experience: 3511147413, // Level 99 exp
+            gold: 0,
+            stashed_gold: 0,
+            strength: base.str,
+            dexterity: base.dex,
+            vitality: base.vit,
+            energy: base.eng,
+            stat_points_remaining: 5 * 98,
+            skill_points_remaining: 98,
+            current_hp: base.hp,
+            max_hp: base.hp,
+            current_mana: base.mana,
+            max_mana: base.mana,
+            current_stamina: base.stamina,
+            max_stamina: base.stamina,
+            skills: [0; 30],
+            raw_bytes: raw,
+            char_file: None,
+            quests: [[0; 41]; 3],
+            hardcore: false,
+            died: false,
+            waypoints: [[false; 39]; 3],
+        }
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let stats_offset = self
+            .char_file
+            .as_ref()
+            .and_then(|f| f.stats().marker_offset)
+            .unwrap_or(765);
+        let skills_offset = self
+            .char_file
+            .as_ref()
+            .and_then(|f| f.skills().map(|s| s.marker_offset))
+            .unwrap_or(stats_offset + 2); // Fallback
+
+        // Encode Stats
+        let mut stats_writer = BitWriter::new();
+        let mut write_stat = |stat: CharacterStat, value: u32| {
+            stats_writer.write_bits(stat as u32, 9);
+            stats_writer.write_bits(value, stat.bit_width() as usize);
+        };
+
+        write_stat(CharacterStat::Strength, self.strength);
+        write_stat(CharacterStat::Energy, self.energy);
+        write_stat(CharacterStat::Dexterity, self.dexterity);
+        write_stat(CharacterStat::Vitality, self.vitality);
+        write_stat(CharacterStat::StatPoints, self.stat_points_remaining);
+        write_stat(CharacterStat::SkillPoints, self.skill_points_remaining);
+        write_stat(CharacterStat::HitPoints, self.current_hp << 8); // shift 8 for fractional precision
+        write_stat(CharacterStat::MaxHitPoints, self.max_hp << 8);
+        write_stat(CharacterStat::Mana, self.current_mana << 8);
+        write_stat(CharacterStat::MaxMana, self.max_mana << 8);
+        write_stat(CharacterStat::Stamina, self.current_stamina << 8);
+        write_stat(CharacterStat::MaxStamina, self.max_stamina << 8);
+        write_stat(CharacterStat::Level, self.level);
+        write_stat(CharacterStat::Experience, self.experience);
+        write_stat(CharacterStat::Gold, self.gold);
+        write_stat(CharacterStat::StashedGold, self.stashed_gold);
+
+        stats_writer.write_bits(0x1FF, 9); // Terminator
+        let encoded_stats = stats_writer.finish();
+
+        // Build new raw bytes
+        let mut new_raw = Vec::new();
+        new_raw.extend_from_slice(&self.raw_bytes[0..stats_offset]);
+        new_raw.extend_from_slice(b"gf"); // Stats magic
+        new_raw.extend_from_slice(&encoded_stats);
+
+        // Encode Skills
+        new_raw.extend_from_slice(b"if"); // Skills magic
+        new_raw.extend_from_slice(&self.skills);
+
+        // Append everything after the original skills block
+        let post_skills_offset = skills_offset + 32;
+        if post_skills_offset < self.raw_bytes.len() {
+            new_raw.extend_from_slice(&self.raw_bytes[post_skills_offset..]);
+        }
+
+        // Apply Quests overrides
+        if let Some(woo_idx) = new_raw.windows(4).position(|window| window == b"Woo!") {
+            let mut offset = woo_idx + 10;
+            for diff in 0..3 {
+                if offset + 96 <= new_raw.len() {
+                    for i in 0..41 {
+                        let word = self.quests[diff][i];
+                        new_raw[offset + i * 2] = (word & 0xFF) as u8;
+                        new_raw[offset + i * 2 + 1] = (word >> 8) as u8;
+                    }
+                    offset += 96;
+                }
+            }
+        }
+
+        // Apply Waypoints overrides
+        if let Some(ws_idx) = new_raw.windows(2).position(|window| window == b"WS") {
+            let mut offset = ws_idx + 8;
+            for diff in 0..3 {
+                if offset + 24 <= new_raw.len() {
+                    let data_offset = offset + 2;
+                    for i in 0..39 {
+                        let byte_idx = i / 8;
+                        let bit_idx = i % 8;
+                        if self.waypoints[diff][i] {
+                            new_raw[data_offset + byte_idx] |= 1 << bit_idx;
+                        } else {
+                            new_raw[data_offset + byte_idx] &= !(1 << bit_idx);
+                        }
+                    }
+                    offset += 24;
+                }
+            }
+        }
+
+        fix_header(&mut new_raw);
+
+        Ok(new_raw)
+    }
+
+    pub fn save_to_file(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+
+        // Safety: Always backup before saving if the file already exists
+        if path.exists() {
+            let mut backup_path = path.to_path_buf();
+            backup_path.set_extension("d2s.bak");
+            std::fs::copy(path, &backup_path).context("Failed to create backup file")?;
+        }
+
+        let bytes = self.to_bytes()?;
+        std::fs::write(path, bytes).context("Failed to write savegame file")?;
+        Ok(())
+    }
+
     pub fn total_allowed_stat_points(&self) -> u32 {
         let level_points = self.level.saturating_sub(1) * 5;
-        // Assume 0 quests for now. Later we will parse quests.
-        let quest_points = 0 * 5;
+        let mut quest_points = 0;
+        for diff in 0..3 {
+            if (self.quests[diff][17] & 1) == 1 {
+                quest_points += 5;
+            } // Lam Esen
+        }
         level_points + quest_points
     }
 
@@ -153,7 +435,6 @@ impl Savegame {
         self.energy = base.eng;
         self.stat_points_remaining = self.total_allowed_stat_points();
 
-        // Recalculate HP, Mana, Stamina based on base values (ignoring level bonuses for now during reset)
         self.current_hp = base.hp;
         self.max_hp = base.hp;
         self.current_mana = base.mana;
@@ -162,32 +443,193 @@ impl Savegame {
         self.max_stamina = base.stamina;
     }
 
-    pub fn increase_stat(&mut self, stat: CharacterStat) {
-        if self.stat_points_remaining == 0 {
+    pub fn set_level(&mut self, new_level: u32) {
+        let old_level = self.level;
+        self.level = new_level.clamp(1, 99);
+        self.experience = Self::calculate_experience_for_level(self.level);
+
+        // Adjust remaining stat points
+        let diff = (self.level as i32) - (old_level as i32);
+        if diff > 0 {
+            self.stat_points_remaining += (diff as u32) * 5;
+            self.skill_points_remaining += diff as u32;
+        } else if diff < 0 {
+            let required_reduction_stats = (-diff as u32) * 5;
+            if self.stat_points_remaining >= required_reduction_stats {
+                self.stat_points_remaining -= required_reduction_stats;
+            } else {
+                self.reset_stats();
+            }
+
+            let required_reduction_skills = -diff as u32;
+            if self.skill_points_remaining >= required_reduction_skills {
+                self.skill_points_remaining -= required_reduction_skills;
+            } else {
+                self.reset_skills();
+            }
+        }
+    }
+
+    pub fn increase_stat(&mut self, stat: CharacterStat, amount: u32) {
+        let actual_amount = amount.min(self.stat_points_remaining);
+        if actual_amount == 0 {
             return;
         }
 
         match stat {
-            CharacterStat::Strength => self.strength += 1,
-            CharacterStat::Dexterity => self.dexterity += 1,
+            CharacterStat::Strength => self.strength += actual_amount,
+            CharacterStat::Dexterity => self.dexterity += actual_amount,
             CharacterStat::Vitality => {
-                self.vitality += 1;
-                // Add specific HP per vitality point depending on class (simplified here)
-                self.current_hp += 2;
-                self.max_hp += 2;
-                self.current_stamina += 1;
-                self.max_stamina += 1;
+                self.vitality += actual_amount;
+                self.current_hp += actual_amount * 2;
+                self.max_hp += actual_amount * 2;
+                self.current_stamina += actual_amount;
+                self.max_stamina += actual_amount;
             }
             CharacterStat::Energy => {
-                self.energy += 1;
-                // Add specific Mana per energy point depending on class (simplified here)
-                self.current_mana += 2;
-                self.max_mana += 2;
+                self.energy += actual_amount;
+                self.current_mana += actual_amount * 2;
+                self.max_mana += actual_amount * 2;
             }
-            _ => return, // Only core stats can be manually increased
+            _ => return,
         }
 
-        self.stat_points_remaining -= 1;
+        self.stat_points_remaining -= actual_amount;
+    }
+
+    pub fn decrease_stat(&mut self, stat: CharacterStat, amount: u32) {
+        let base = BaseStats::for_class(self.class);
+
+        match stat {
+            CharacterStat::Strength => {
+                let diff = self.strength.saturating_sub(base.str).min(amount);
+                self.strength -= diff;
+                self.stat_points_remaining += diff;
+            }
+            CharacterStat::Dexterity => {
+                let diff = self.dexterity.saturating_sub(base.dex).min(amount);
+                self.dexterity -= diff;
+                self.stat_points_remaining += diff;
+            }
+            CharacterStat::Vitality => {
+                let diff = self.vitality.saturating_sub(base.vit).min(amount);
+                self.vitality -= diff;
+                self.current_hp = self.current_hp.saturating_sub(diff * 2).max(base.hp);
+                self.max_hp = self.max_hp.saturating_sub(diff * 2).max(base.hp);
+                self.current_stamina = self.current_stamina.saturating_sub(diff).max(base.stamina);
+                self.max_stamina = self.max_stamina.saturating_sub(diff).max(base.stamina);
+                self.stat_points_remaining += diff;
+            }
+            CharacterStat::Energy => {
+                let diff = self.energy.saturating_sub(base.eng).min(amount);
+                self.energy -= diff;
+                self.current_mana = self.current_mana.saturating_sub(diff * 2).max(base.mana);
+                self.max_mana = self.max_mana.saturating_sub(diff * 2).max(base.mana);
+                self.stat_points_remaining += diff;
+            }
+            _ => {}
+        }
+    }
+
+    pub fn set_name(&mut self, new_name: String) {
+        let name = new_name.chars().take(15).collect::<String>();
+        self.name = name;
+
+        if self.raw_bytes.len() > 0x14 + 16 {
+            let name_bytes = self.name.as_bytes();
+            let len = name_bytes.len().min(15);
+            self.raw_bytes[0x14..0x14 + 16].fill(0);
+            self.raw_bytes[0x14..0x14 + len].copy_from_slice(&name_bytes[..len]);
+        }
+    }
+
+    pub fn reset_skills(&mut self) {
+        let mut total_spent = 0;
+        for level in &mut self.skills {
+            total_spent += *level as u32;
+            *level = 0;
+        }
+        self.skill_points_remaining += total_spent;
+    }
+
+    pub fn toggle_all_waypoints(&mut self, difficulty: Option<usize>, state: bool) {
+        match difficulty {
+            Some(diff) if diff < 3 => {
+                for wp in &mut self.waypoints[diff] {
+                    *wp = state;
+                }
+            }
+            None => {
+                for diff in 0..3 {
+                    for wp in &mut self.waypoints[diff] {
+                        *wp = state;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn toggle_all_quests(&mut self, difficulty: Option<usize>, state: bool) {
+        let quest_indices = [
+            0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 17, 18, 19, 20, 21, 22, 25, 26, 27, 35, 36,
+            37, 38, 39, 40,
+        ];
+
+        match difficulty {
+            Some(diff) if diff < 3 => {
+                for &idx in &quest_indices {
+                    let is_completed = (self.quests[diff][idx] & 1) == 1;
+                    if is_completed != state {
+                        self.toggle_quest(diff, idx);
+                    }
+                }
+            }
+            None => {
+                for diff in 0..3 {
+                    for &idx in &quest_indices {
+                        let is_completed = (self.quests[diff][idx] & 1) == 1;
+                        if is_completed != state {
+                            self.toggle_quest(diff, idx);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn get_quest_name(idx: usize) -> &'static str {
+        match idx {
+            0 => "Den of Evil",
+            1 => "Sisters' Burial Grounds",
+            2 => "Tools of the Trade",
+            3 => "The Search for Cain",
+            4 => "The Forgotten Tower",
+            5 => "Sisters to the Slaughter",
+            9 => "Radament's Lair",
+            10 => "The Horadric Staff",
+            11 => "Tainted Sun",
+            12 => "Arcane Sanctuary",
+            13 => "The Summoner",
+            14 => "The Seven Tombs",
+            17 => "Lam Esen's Tome",
+            18 => "Khalim's Will",
+            19 => "Blade of the Old Religion",
+            20 => "The Golden Bird",
+            21 => "The Blackened Temple",
+            22 => "The Guardian",
+            25 => "The Fallen Angel",
+            26 => "Terror's End",
+            27 => "Hellforge",
+            35 => "Siege on Harrogath",
+            36 => "Rescue on Mount Arreat",
+            37 => "Prison of Ice",
+            38 => "Betrayal of Harrogath",
+            39 => "Rite of Passage",
+            40 => "Eve of Destruction",
+            _ => "Unknown Quest",
+        }
     }
 
     pub fn get_skill_name(class: CharacterClass, slot: usize) -> &'static str {
@@ -388,7 +830,7 @@ impl Savegame {
                 27 => "Shock Wave",
                 28 => "Summon Dire Bear",
                 29 => "Hurricane",
-                _ => "Unknown", // Needs proper correction but good enough for now
+                _ => "Unknown",
             },
             CharacterClass::Assassin => match slot {
                 0 => "Fire Blast",
@@ -441,7 +883,6 @@ impl Savegame {
                 21 => (24, vec![1, 10]), // Immolation Arrow
                 25 => (30, vec![5, 16]), // Freezing Arrow
                 20 => (24, vec![6]),     // Strafe
-                // ... simplified for others
                 _ => (1, vec![]),
             },
             _ => (1, vec![]), // TODO: full mapping
@@ -474,70 +915,11 @@ impl Savegame {
         }
     }
 
-    pub fn toggle_quest(&mut self, difficulty: usize, quest_idx: usize) {
-        if difficulty < 3 && quest_idx < 41 {
-            let current = self.quests[difficulty][quest_idx];
-            // Toggle completed bit (0)
-            if current & 1 == 1 {
-                // Remove completion and requirement completion
-                self.quests[difficulty][quest_idx] &= !3;
-
-                // Refund points if applicable
-                // Den of Evil (1), Radament (9), Izual (25) -> 1, 1, 2 skill points
-                match quest_idx {
-                    1 | 9 => {
-                        self.skill_points_remaining = self.skill_points_remaining.saturating_sub(1)
-                    }
-                    25 => {
-                        self.skill_points_remaining = self.skill_points_remaining.saturating_sub(2)
-                    }
-                    17 => self.stat_points_remaining = self.stat_points_remaining.saturating_sub(5), // Lam Esen
-                    _ => {}
-                }
-            } else {
-                // Add completion and requirement completion
-                self.quests[difficulty][quest_idx] |= 3;
-
-                // Add points if applicable
-                match quest_idx {
-                    1 | 9 => self.skill_points_remaining += 1,
-                    25 => self.skill_points_remaining += 2,
-                    17 => self.stat_points_remaining += 5, // Lam Esen
-                    _ => {}
-                }
-            }
-        }
-    }
-
     pub fn decrease_skill(&mut self, slot: usize) {
         if slot < 30 && self.skills[slot] > 0 {
             self.skills[slot] -= 1;
             self.skill_points_remaining += 1;
         }
-    }
-
-    pub fn decrease_stat(&mut self, stat: CharacterStat) {
-        let base = BaseStats::for_class(self.class);
-
-        match stat {
-            CharacterStat::Strength if self.strength > base.str => self.strength -= 1,
-            CharacterStat::Dexterity if self.dexterity > base.dex => self.dexterity -= 1,
-            CharacterStat::Vitality if self.vitality > base.vit => {
-                self.vitality -= 1;
-                self.current_hp = self.current_hp.saturating_sub(2).max(base.hp);
-                self.max_hp = self.max_hp.saturating_sub(2).max(base.hp);
-                self.current_stamina = self.current_stamina.saturating_sub(1).max(base.stamina);
-                self.max_stamina = self.max_stamina.saturating_sub(1).max(base.stamina);
-            }
-            CharacterStat::Energy if self.energy > base.eng => {
-                self.energy -= 1;
-                self.current_mana = self.current_mana.saturating_sub(2).max(base.mana);
-                self.max_mana = self.max_mana.saturating_sub(2).max(base.mana);
-            }
-            _ => return, // Cannot decrease below base or unsupported stat
-        }
-
-        self.stat_points_remaining += 1;
     }
 
     pub fn calculate_experience_for_level(level: u32) -> u32 {
@@ -658,309 +1040,38 @@ impl Savegame {
         std::cmp::min(exp, u32::MAX as u64) as u32
     }
 
-    pub fn set_level(&mut self, new_level: u32) {
-        let old_level = self.level;
-        self.level = new_level.clamp(1, 99);
-        self.experience = Self::calculate_experience_for_level(self.level);
+    pub fn toggle_quest(&mut self, difficulty: usize, quest_idx: usize) {
+        if difficulty < 3 && quest_idx < 41 {
+            let current = self.quests[difficulty][quest_idx];
+            // Toggle completed bit (0)
+            if current & 1 == 1 {
+                // Remove completion and requirement completion
+                self.quests[difficulty][quest_idx] &= !3;
 
-        // Adjust remaining stat points
-        let diff = (self.level as i32) - (old_level as i32);
-        if diff > 0 {
-            self.stat_points_remaining += (diff as u32) * 5;
-            self.skill_points_remaining += diff as u32;
-        } else if diff < 0 {
-            // Need to reset if we lose levels and can't cover it
-            let required_reduction_stats = (-diff as u32) * 5;
-            if self.stat_points_remaining >= required_reduction_stats {
-                self.stat_points_remaining -= required_reduction_stats;
+                // Refund points if applicable
+                // Den of Evil (1), Radament (9), Izual (25) -> 1, 1, 2 skill points
+                match quest_idx {
+                    1 | 9 => {
+                        self.skill_points_remaining = self.skill_points_remaining.saturating_sub(1)
+                    }
+                    25 => {
+                        self.skill_points_remaining = self.skill_points_remaining.saturating_sub(2)
+                    }
+                    17 => self.stat_points_remaining = self.stat_points_remaining.saturating_sub(5), // Lam Esen
+                    _ => {}
+                }
             } else {
-                self.reset_stats();
-            }
+                // Add completion and requirement completion
+                self.quests[difficulty][quest_idx] |= 3;
 
-            let required_reduction_skills = -diff as u32;
-            if self.skill_points_remaining >= required_reduction_skills {
-                self.skill_points_remaining -= required_reduction_skills;
-            } else {
-                // TODO: reset skills
-            }
-        }
-    }
-
-    pub fn load_from_file(path: impl AsRef<Path>) -> Result<Self> {
-        let char_file = CharacterFile::load(path)?;
-
-        let header = char_file.header();
-        let class = header.class.unwrap_or(CharacterClass::Amazon);
-        let name = header.name.clone();
-
-        // Parse skills
-        let mut skills = [0; 30];
-        if let Some(char_skills) = char_file.skills() {
-            skills.copy_from_slice(&char_skills.levels);
-        }
-
-        let raw_bytes = char_file.to_bytes();
-        let mut quests = [[0u16; 41]; 3];
-        // Parse quests from raw_bytes. Look for "Woo!"
-        if let Some(woo_idx) = raw_bytes.windows(4).position(|window| window == b"Woo!") {
-            let mut offset = woo_idx + 10; // Skip 10 byte header
-            for diff in 0..3 {
-                if offset + 96 <= raw_bytes.len() {
-                    for i in 0..41 {
-                        let b1 = raw_bytes[offset + i * 2] as u16;
-                        let b2 = raw_bytes[offset + i * 2 + 1] as u16;
-                        quests[diff][i] = b1 | (b2 << 8);
-                    }
-                    offset += 96;
+                // Add points if applicable
+                match quest_idx {
+                    1 | 9 => self.skill_points_remaining += 1,
+                    25 => self.skill_points_remaining += 2,
+                    17 => self.stat_points_remaining += 5, // Lam Esen
+                    _ => {}
                 }
             }
         }
-
-        let mut waypoints = [[false; 39]; 3];
-        if let Some(ws_idx) = raw_bytes.windows(2).position(|window| window == b"WS") {
-            let mut offset = ws_idx + 8; // Skip WS, unknown, and length
-            for diff in 0..3 {
-                if offset + 24 <= raw_bytes.len() {
-                    // Each diff block is 24 bytes: 2 bytes header (0x02 0x01) + 22 bytes data
-                    let data_offset = offset + 2;
-                    for i in 0..39 {
-                        let byte_idx = i / 8;
-                        let bit_idx = i % 8;
-                        waypoints[diff][i] =
-                            (raw_bytes[data_offset + byte_idx] & (1 << bit_idx)) != 0;
-                    }
-                    offset += 24;
-                }
-            }
-        }
-
-        let savegame = Self {
-            name,
-            class,
-            level: char_file.stat(CharacterStat::Level).unwrap_or(1),
-            experience: char_file.stat(CharacterStat::Experience).unwrap_or(0),
-            gold: char_file.stat(CharacterStat::Gold).unwrap_or(0),
-            stashed_gold: char_file.stat(CharacterStat::StashedGold).unwrap_or(0),
-            strength: char_file
-                .stat(CharacterStat::Strength)
-                .unwrap_or_else(|| BaseStats::for_class(class).str),
-            dexterity: char_file
-                .stat(CharacterStat::Dexterity)
-                .unwrap_or_else(|| BaseStats::for_class(class).dex),
-            vitality: char_file
-                .stat(CharacterStat::Vitality)
-                .unwrap_or_else(|| BaseStats::for_class(class).vit),
-            energy: char_file
-                .stat(CharacterStat::Energy)
-                .unwrap_or_else(|| BaseStats::for_class(class).eng),
-            stat_points_remaining: char_file.stat(CharacterStat::StatPoints).unwrap_or(0),
-            skill_points_remaining: char_file.stat(CharacterStat::SkillPoints).unwrap_or(0),
-            current_hp: char_file
-                .stat(CharacterStat::HitPoints)
-                .unwrap_or_else(|| BaseStats::for_class(class).hp << 8)
-                >> 8,
-            max_hp: char_file
-                .stat(CharacterStat::MaxHitPoints)
-                .unwrap_or_else(|| BaseStats::for_class(class).hp << 8)
-                >> 8,
-            current_mana: char_file
-                .stat(CharacterStat::Mana)
-                .unwrap_or_else(|| BaseStats::for_class(class).mana << 8)
-                >> 8,
-            max_mana: char_file
-                .stat(CharacterStat::MaxMana)
-                .unwrap_or_else(|| BaseStats::for_class(class).mana << 8)
-                >> 8,
-            current_stamina: char_file
-                .stat(CharacterStat::Stamina)
-                .unwrap_or_else(|| BaseStats::for_class(class).stamina << 8)
-                >> 8,
-            max_stamina: char_file
-                .stat(CharacterStat::MaxStamina)
-                .unwrap_or_else(|| BaseStats::for_class(class).stamina << 8)
-                >> 8,
-            skills,
-            raw_bytes,
-            char_file: Some(char_file.clone()),
-            quests,
-            hardcore: header.status.hardcore,
-            died: header.status.died,
-            waypoints,
-        };
-
-        Ok(savegame)
-    }
-
-    pub fn generate_template(class: CharacterClass) -> Self {
-        let base = BaseStats::for_class(class);
-        let name = format!("Template{}", class);
-
-        let mut raw = vec![0u8; 0x2fd];
-        raw[0..4].copy_from_slice(&0xaa55_aa55_u32.to_le_bytes()); // D2S_MAGIC
-        raw[4..8].copy_from_slice(&0x60_u32.to_le_bytes()); // VERSION_OFFSET
-        raw[0x28] = class as u8; // LEGACY_CLASS_OFFSET
-        raw[0x2b] = 99; // LEGACY_LEVEL_OFFSET
-        raw[0x24] = 0x20; // Status: Expansion (1 << 5)
-
-        let name_bytes = name.as_bytes();
-        let len = name_bytes.len().min(15);
-        raw[0x14..0x14 + len].copy_from_slice(&name_bytes[..len]);
-
-        // Emulate `build_legacy_fixed_pre_stats_block` criticals
-        raw[0x29] = 0x10;
-        raw[0x2a] = 0x1e;
-        raw[0x34..0x38].fill(0xff);
-
-        // Quests
-        raw[0x14b] = 1;
-        raw[0x14f..0x153].copy_from_slice(b"Woo!");
-        raw[0x153..0x159].copy_from_slice(&[0x06, 0x00, 0x00, 0x00, 0x00, 0x00]);
-
-        // Waypoints
-        raw[0x279..0x279 + 2].copy_from_slice(b"WS");
-        raw[0x279 + 2..0x279 + 6].copy_from_slice(&[0x01, 0x00, 0x00, 0x00]);
-        raw[0x279 + 6..0x279 + 8].copy_from_slice(&[0x50, 0x00]); // 80 bytes len
-
-        // NPC
-        raw[0x2cd..0x2cd + 2].copy_from_slice(b"w4");
-        raw[0x2cd + 2..0x2cd + 4].copy_from_slice(&[0x34, 0x00]); // 52 bytes len
-
-        Self {
-            name,
-            class,
-            level: 99,
-            experience: 3511147413, // Level 99 exp
-            gold: 0,
-            stashed_gold: 0,
-            strength: base.str,
-            dexterity: base.dex,
-            vitality: base.vit,
-            energy: base.eng,
-            stat_points_remaining: 5 * 98,
-            skill_points_remaining: 98,
-            current_hp: base.hp,
-            max_hp: base.hp,
-            current_mana: base.mana,
-            max_mana: base.mana,
-            current_stamina: base.stamina,
-            max_stamina: base.stamina,
-            skills: [0; 30],
-            raw_bytes: raw,
-            char_file: None, // No valid parsed file yet, but raw_bytes are primed
-            quests: [[0; 41]; 3],
-            hardcore: false,
-            died: false,
-            waypoints: [[false; 39]; 3],
-        }
-    }
-
-    pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        let stats_offset = self
-            .char_file
-            .as_ref()
-            .and_then(|f| f.stats().marker_offset)
-            .unwrap_or(765);
-        let skills_offset = self
-            .char_file
-            .as_ref()
-            .and_then(|f| f.skills().map(|s| s.marker_offset))
-            .unwrap_or(stats_offset + 2); // Fallback
-
-        // Encode Stats
-        let mut stats_writer = BitWriter::new();
-        let mut write_stat = |stat: CharacterStat, value: u32| {
-            stats_writer.write_bits(stat as u32, 9);
-            stats_writer.write_bits(value, stat.bit_width() as usize);
-        };
-
-        write_stat(CharacterStat::Strength, self.strength);
-        write_stat(CharacterStat::Energy, self.energy);
-        write_stat(CharacterStat::Dexterity, self.dexterity);
-        write_stat(CharacterStat::Vitality, self.vitality);
-        write_stat(CharacterStat::StatPoints, self.stat_points_remaining);
-        write_stat(CharacterStat::SkillPoints, self.skill_points_remaining);
-        write_stat(CharacterStat::HitPoints, self.current_hp << 8); // shift 8 for fractional precision
-        write_stat(CharacterStat::MaxHitPoints, self.max_hp << 8);
-        write_stat(CharacterStat::Mana, self.current_mana << 8);
-        write_stat(CharacterStat::MaxMana, self.max_mana << 8);
-        write_stat(CharacterStat::Stamina, self.current_stamina << 8);
-        write_stat(CharacterStat::MaxStamina, self.max_stamina << 8);
-        write_stat(CharacterStat::Level, self.level);
-        write_stat(CharacterStat::Experience, self.experience);
-        write_stat(CharacterStat::Gold, self.gold);
-        write_stat(CharacterStat::StashedGold, self.stashed_gold);
-
-        stats_writer.write_bits(0x1FF, 9); // Terminator
-        let encoded_stats = stats_writer.finish();
-
-        // Build new raw bytes
-        let mut new_raw = Vec::new();
-        new_raw.extend_from_slice(&self.raw_bytes[0..stats_offset]);
-        new_raw.extend_from_slice(b"gf"); // Stats magic
-        new_raw.extend_from_slice(&encoded_stats);
-
-        // Encode Skills
-        new_raw.extend_from_slice(b"if"); // Skills magic
-        new_raw.extend_from_slice(&self.skills);
-
-        // Append everything after the original skills block
-        let post_skills_offset = skills_offset + 32;
-        if post_skills_offset < self.raw_bytes.len() {
-            new_raw.extend_from_slice(&self.raw_bytes[post_skills_offset..]);
-        }
-
-        // Apply Quests overrides
-        if let Some(woo_idx) = new_raw.windows(4).position(|window| window == b"Woo!") {
-            let mut offset = woo_idx + 10;
-            for diff in 0..3 {
-                if offset + 96 <= new_raw.len() {
-                    for i in 0..41 {
-                        let word = self.quests[diff][i];
-                        new_raw[offset + i * 2] = (word & 0xFF) as u8;
-                        new_raw[offset + i * 2 + 1] = (word >> 8) as u8;
-                    }
-                    offset += 96;
-                }
-            }
-        }
-
-        // Apply Waypoints overrides
-        if let Some(ws_idx) = new_raw.windows(2).position(|window| window == b"WS") {
-            let mut offset = ws_idx + 8;
-            for diff in 0..3 {
-                if offset + 24 <= new_raw.len() {
-                    let data_offset = offset + 2;
-                    for i in 0..39 {
-                        let byte_idx = i / 8;
-                        let bit_idx = i % 8;
-                        if self.waypoints[diff][i] {
-                            new_raw[data_offset + byte_idx] |= 1 << bit_idx;
-                        } else {
-                            new_raw[data_offset + byte_idx] &= !(1 << bit_idx);
-                        }
-                    }
-                    offset += 24;
-                }
-            }
-        }
-
-        fix_header(&mut new_raw);
-
-        Ok(new_raw)
-    }
-
-    pub fn save_to_file(&self, path: impl AsRef<Path>) -> Result<()> {
-        let path = path.as_ref();
-
-        // Safety: Always backup before saving if the file already exists
-        if path.exists() {
-            let mut backup_path = path.to_path_buf();
-            backup_path.set_extension("d2s.bak");
-            std::fs::copy(path, &backup_path).context("Failed to create backup file")?;
-        }
-
-        let bytes = self.to_bytes()?;
-        std::fs::write(path, bytes).context("Failed to write savegame file")?;
-        Ok(())
     }
 }

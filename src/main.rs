@@ -1,11 +1,15 @@
-use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
+use iced::widget::{
+    Space, button, checkbox, column, container, row, scrollable, text, text_input, tooltip,
+};
 use iced::{Alignment, Element, Length, Task};
 use libd2::core::character_class::CharacterClass;
 use libd2::core::character_file::CharacterStat;
 use std::path::PathBuf;
 
+mod config;
 mod model;
 mod save;
+use config::Config;
 use model::Savegame;
 
 pub fn main() -> iced::Result {
@@ -42,14 +46,17 @@ struct App {
     state: AppState,
     file_path: String,
     selected_template: Option<CharacterClass>,
+    config: Config,
 }
 
 impl Default for App {
     fn default() -> Self {
+        let config = confy::load("d2sed", None).unwrap_or_default();
         Self {
             state: AppState::LaunchScreen,
             file_path: String::new(),
             selected_template: None,
+            config,
         }
     }
 }
@@ -62,8 +69,8 @@ enum Message {
     TemplateSelected(CharacterClass),
     LoadCharacter,
     BackToLaunch,
-    IncreaseStat(CharacterStat),
-    DecreaseStat(CharacterStat),
+    IncreaseStat(CharacterStat, u32),
+    DecreaseStat(CharacterStat, u32),
     ResetStats,
     IncreaseLevel,
     DecreaseLevel,
@@ -74,6 +81,12 @@ enum Message {
     SetLeftTab(EditorLeftTab),
     SetRightTab(EditorRightTab),
     ToggleWaypoint(usize, usize),
+    NameChanged(String),
+    ResetSkills,
+    ToggleAllWaypoints(Option<usize>, bool),
+    ToggleAllQuests(Option<usize>, bool),
+    ChangeExportPath,
+    ExportPathSelected(Option<PathBuf>),
 }
 
 impl App {
@@ -104,23 +117,34 @@ impl App {
                 Task::none()
             }
             Message::LoadCharacter => {
+                let left_tab = EditorLeftTab::Stats;
+                let right_tab = EditorRightTab::Skills;
+
                 if let Some(class) = self.selected_template {
                     self.state = AppState::Editor {
                         save: Savegame::generate_template(class),
-                        left_tab: EditorLeftTab::Stats,
-                        right_tab: EditorRightTab::Skills,
+                        left_tab,
+                        right_tab,
                     };
                 } else if !self.file_path.is_empty() {
+                    let path = PathBuf::from(&self.file_path);
+                    if let Some(parent) = path.parent() {
+                        if self.config.export_path.is_none() {
+                            self.config.export_path = Some(parent.to_path_buf());
+                            let _ = confy::store("d2sed", None, &self.config);
+                        }
+                    }
+
                     match Savegame::load_from_file(&self.file_path) {
                         Ok(savegame) => {
                             self.state = AppState::Editor {
                                 save: savegame,
-                                left_tab: EditorLeftTab::Stats,
-                                right_tab: EditorRightTab::Skills,
+                                left_tab,
+                                right_tab,
                             };
                         }
                         Err(e) => {
-                            println!("Failed to load savegame: {:?}", e); // TODO: show in UI
+                            println!("Failed to load savegame: {:?}", e);
                         }
                     }
                 }
@@ -130,15 +154,15 @@ impl App {
                 self.state = AppState::LaunchScreen;
                 Task::none()
             }
-            Message::IncreaseStat(stat) => {
+            Message::IncreaseStat(stat, amount) => {
                 if let AppState::Editor { save, .. } = &mut self.state {
-                    save.increase_stat(stat);
+                    save.increase_stat(stat, amount);
                 }
                 Task::none()
             }
-            Message::DecreaseStat(stat) => {
+            Message::DecreaseStat(stat, amount) => {
                 if let AppState::Editor { save, .. } = &mut self.state {
-                    save.decrease_stat(stat);
+                    save.decrease_stat(stat, amount);
                 }
                 Task::none()
             }
@@ -198,12 +222,57 @@ impl App {
                 }
                 Task::none()
             }
+            Message::NameChanged(new_name) => {
+                if let AppState::Editor { save, .. } = &mut self.state {
+                    save.set_name(new_name);
+                }
+                Task::none()
+            }
+            Message::ResetSkills => {
+                if let AppState::Editor { save, .. } = &mut self.state {
+                    save.reset_skills();
+                }
+                Task::none()
+            }
+            Message::ToggleAllWaypoints(difficulty, state) => {
+                if let AppState::Editor { save, .. } = &mut self.state {
+                    save.toggle_all_waypoints(difficulty, state);
+                }
+                Task::none()
+            }
+            Message::ToggleAllQuests(difficulty, state) => {
+                if let AppState::Editor { save, .. } = &mut self.state {
+                    save.toggle_all_quests(difficulty, state);
+                }
+                Task::none()
+            }
+            Message::ChangeExportPath => {
+                let default_path = self
+                    .config
+                    .export_path
+                    .clone()
+                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+                let path = rfd::FileDialog::new()
+                    .set_directory(default_path)
+                    .pick_folder();
+                Task::done(Message::ExportPathSelected(path))
+            }
+            Message::ExportPathSelected(Some(path)) => {
+                self.config.export_path = Some(path);
+                let _ = confy::store("d2sed", None, &self.config);
+                Task::none()
+            }
+            Message::ExportPathSelected(None) => Task::none(),
             Message::SaveCharacter => {
                 if let AppState::Editor { save, .. } = &self.state {
-                    let path = &self.file_path;
-                    if !path.is_empty() {
-                        match save.save_to_file(path) {
-                            Ok(_) => println!("Successfully saved {}", path), // TODO: UI log
+                    let mut path = self.config.export_path.clone().unwrap_or_else(|| {
+                        rfd::FileDialog::new().pick_folder().unwrap_or_default()
+                    });
+
+                    if !path.as_os_str().is_empty() {
+                        path.push(format!("{}.d2s", save.name));
+                        match save.save_to_file(&path) {
+                            Ok(_) => println!("Successfully saved {:?}", path),
                             Err(e) => println!("Failed to save: {:?}", e),
                         }
                     }
@@ -300,10 +369,20 @@ impl App {
         left_tab: &EditorLeftTab,
         right_tab: &EditorRightTab,
     ) -> Element<'_, Message> {
+        let export_folder_text = self
+            .config
+            .export_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "No path set".to_string());
+
         let header = container(
             row![
                 column![
-                    text(format!("{}", save.name)).size(30),
+                    text_input("Name", &save.name)
+                        .on_input(Message::NameChanged)
+                        .size(30)
+                        .width(Length::Fixed(200.0)),
                     text(format!("Level {} {}", save.level, save.class)).size(18),
                 ],
                 Space::new().width(20),
@@ -321,10 +400,19 @@ impl App {
                     }),
                 ],
                 Space::new().width(Length::Fill),
+                column![
+                    text("Export Path:").size(12),
+                    button(text(export_folder_text).size(12))
+                        .on_press(Message::ChangeExportPath)
+                        .padding(5),
+                ]
+                .spacing(2),
+                Space::new().width(60),
                 button("Save .d2s")
                     .on_press(Message::SaveCharacter)
                     .padding(10)
                     .style(button::primary),
+                Space::new().width(60),
                 button("Back").on_press(Message::BackToLaunch).padding(10),
             ]
             .align_y(Alignment::Center)
@@ -336,7 +424,6 @@ impl App {
         })
         .width(Length::Fill);
 
-        // Left Pane Tabs
         let left_tabs = row![
             button("Stats")
                 .on_press(Message::SetLeftTab(EditorLeftTab::Stats))
@@ -367,13 +454,23 @@ impl App {
                 let stat_row = |name: String, value: u32, stat: CharacterStat| {
                     row![
                         text(name).width(Length::Fixed(100.0)),
-                        button("-").on_press(Message::DecreaseStat(stat)).padding(5),
+                        button("-10")
+                            .on_press(Message::DecreaseStat(stat, 10))
+                            .padding(5),
+                        button("-")
+                            .on_press(Message::DecreaseStat(stat, 1))
+                            .padding(5),
                         text(value.to_string())
                             .width(Length::Fixed(40.0))
                             .align_x(Alignment::Center),
-                        button("+").on_press(Message::IncreaseStat(stat)).padding(5),
+                        button("+")
+                            .on_press(Message::IncreaseStat(stat, 1))
+                            .padding(5),
+                        button("+10")
+                            .on_press(Message::IncreaseStat(stat, 10))
+                            .padding(5),
                     ]
-                    .spacing(10)
+                    .spacing(5)
                     .align_y(Alignment::Center)
                 };
 
@@ -432,19 +529,18 @@ impl App {
             }
             EditorLeftTab::ExtendedStats => column![
                 text("Extended Stats").size(24),
-                text("Gold in Hand:"),
-                text_input("0", &save.gold.to_string()).padding(5),
-                text("Gold in Stash:"),
-                text_input("0", &save.stashed_gold.to_string()).padding(5),
+                text("This page will eventually show combined item stats.").size(14),
             ]
             .spacing(10)
             .into(),
-            EditorLeftTab::Stash => self
-                .draw_grid(10, 10, 35.0, "Shared/Private Stash (10x10)".to_string())
-                .into(),
+            EditorLeftTab::Stash => column![
+                text(format!("Gold: {}", save.stashed_gold)).size(18),
+                self.draw_grid(10, 10, 35.0, "Stash".to_string()),
+            ]
+            .spacing(10)
+            .into(),
         };
 
-        // Right Pane Tabs
         let right_tabs = row![
             button("Skills")
                 .on_press(Message::SetRightTab(EditorRightTab::Skills))
@@ -480,7 +576,14 @@ impl App {
         let right_content: Element<Message> = match right_tab {
             EditorRightTab::Skills => {
                 let mut skills_col = column![
-                    text("Skill Trees").size(24),
+                    row![
+                        text("Skill Trees").size(24),
+                        Space::new().width(Length::Fill),
+                        button("Reset Skills")
+                            .on_press(Message::ResetSkills)
+                            .padding(5),
+                    ]
+                    .align_y(Alignment::Center),
                     text(format!(
                         "Skill Points Remaining: {}",
                         save.skill_points_remaining
@@ -532,49 +635,88 @@ impl App {
                 ];
 
                 let difficulties = ["Normal", "Nightmare", "Hell"];
-                let mut diff_tabs = row![].spacing(20);
+
+                let all_completed = difficulties.iter().enumerate().all(|(d, _)| {
+                    [
+                        0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 17, 18, 19, 20, 21, 22, 25, 26,
+                        27, 35, 36, 37, 38, 39, 40,
+                    ]
+                    .iter()
+                    .all(|&q| (save.quests[d][q] & 1) == 1)
+                });
+
+                let quest_header = row![
+                    text("Quest Log").size(24),
+                    Space::new().width(40),
+                    checkbox(all_completed)
+                        .label("Toggle All Difficulties")
+                        .on_toggle(move |state| Message::ToggleAllQuests(None, state)),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center);
+
+                let mut diff_row = row![].spacing(20);
 
                 for (diff_idx, diff_name) in difficulties.iter().enumerate() {
-                    let mut diff_col = column![text(*diff_name).size(20)].spacing(15);
+                    let diff_all_done = [
+                        0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 17, 18, 19, 20, 21, 22, 25, 26,
+                        27, 35, 36, 37, 38, 39, 40,
+                    ]
+                    .iter()
+                    .all(|&q| (save.quests[diff_idx][q] & 1) == 1);
+
+                    let mut diff_col = column![
+                        text(*diff_name).size(20),
+                        checkbox(diff_all_done)
+                            .label("All")
+                            .on_toggle(move |state| Message::ToggleAllQuests(
+                                Some(diff_idx),
+                                state
+                            )),
+                    ]
+                    .spacing(15);
 
                     for (act_name, quest_indices) in acts {
                         let mut act_col = column![text(act_name).size(16)].spacing(5);
                         let mut quest_grid = column![].spacing(2);
 
-                        // 2x3 grid logic for quests
                         for chunk in quest_indices.chunks(3) {
                             let mut q_row = row![].spacing(5);
                             for &q_idx in chunk {
                                 let is_completed = (save.quests[diff_idx][q_idx] & 1) == 1;
-                                q_row = q_row.push(
-                                    button(text(format!("Q{}", q_idx)))
-                                        .on_press(Message::ToggleQuest(diff_idx, q_idx))
-                                        .style(if is_completed {
-                                            button::success
-                                        } else {
-                                            button::secondary
-                                        })
-                                        .width(Length::Fixed(40.0)),
-                                );
+                                let q_name = Savegame::get_quest_name(q_idx);
+
+                                let btn = button(text(format!("Q{}", q_idx)))
+                                    .on_press(Message::ToggleQuest(diff_idx, q_idx))
+                                    .style(if is_completed {
+                                        button::success
+                                    } else {
+                                        button::secondary
+                                    })
+                                    .width(Length::Fixed(40.0));
+
+                                q_row = q_row.push(tooltip(btn, q_name, tooltip::Position::Top));
                             }
                             quest_grid = quest_grid.push(q_row);
                         }
                         act_col = act_col.push(quest_grid);
                         diff_col = diff_col.push(act_col);
                     }
-                    diff_tabs = diff_tabs.push(diff_col);
+                    diff_row = diff_row.push(diff_col);
                 }
-                column![
-                    text("Quest Log").size(24),
-                    Space::new().height(10),
-                    diff_tabs
-                ]
-                .spacing(10)
-                .into()
+                column![quest_header, Space::new().height(10), diff_row]
+                    .spacing(10)
+                    .into()
             }
             EditorRightTab::Waypoints => {
+                let act_ranges = [
+                    ("Act I", 0..9),
+                    ("Act II", 9..18),
+                    ("Act III", 18..27),
+                    ("Act IV", 27..30),
+                    ("Act V", 30..39),
+                ];
                 let wp_names = [
-                    // Act 1
                     "Rogue Encampment",
                     "Cold Plains",
                     "Stony Field",
@@ -584,7 +726,6 @@ impl App {
                     "Jail Level 1",
                     "Inner Cloister",
                     "Catacombs Level 2",
-                    // Act 2
                     "Lut Gholein",
                     "Sewers Level 2",
                     "Dry Hills",
@@ -594,7 +735,6 @@ impl App {
                     "Palace Cellar L1",
                     "Arcane Sanctuary",
                     "Canyon of the Magi",
-                    // Act 3
                     "Kurast Docks",
                     "Spider Forest",
                     "Great Marsh",
@@ -604,11 +744,9 @@ impl App {
                     "Upper Kurast",
                     "Travincal",
                     "Durance of Hate L2",
-                    // Act 4
                     "Pandemonium Fortress",
                     "City of the Damned",
                     "River of Flame",
-                    // Act 5
                     "Harrogath",
                     "Frigid Highlands",
                     "Arreat Plateau",
@@ -621,37 +759,65 @@ impl App {
                 ];
 
                 let difficulties = ["Normal", "Nightmare", "Hell"];
+
+                let all_wps_done = (0..3).all(|d| (0..39).all(|w| save.waypoints[d][w]));
+
+                let wp_header = row![
+                    text("Waypoints").size(24),
+                    Space::new().width(40),
+                    checkbox(all_wps_done)
+                        .label("Unlock All Diffs")
+                        .on_toggle(|state| Message::ToggleAllWaypoints(None, state)),
+                ]
+                .align_y(Alignment::Center);
+
                 let mut diff_row = row![].spacing(20);
                 for (diff_idx, diff_name) in difficulties.iter().enumerate() {
-                    let mut diff_col = column![text(*diff_name).size(20)].spacing(5);
-                    for (wp_idx, wp_name) in wp_names.iter().enumerate() {
-                        let is_active = save.waypoints[diff_idx][wp_idx];
-                        diff_col = diff_col.push(
-                            button(text(*wp_name))
-                                .on_press(Message::ToggleWaypoint(diff_idx, wp_idx))
-                                .style(if is_active {
-                                    button::success
-                                } else {
-                                    button::secondary
-                                })
-                                .padding(5)
-                                .width(Length::Fixed(180.0)),
-                        );
+                    let diff_all_wps = (0..39).all(|w| save.waypoints[diff_idx][w]);
+
+                    let mut diff_col = column![
+                        text(*diff_name).size(20),
+                        checkbox(diff_all_wps).label("All").on_toggle(move |state| {
+                            Message::ToggleAllWaypoints(Some(diff_idx), state)
+                        }),
+                    ]
+                    .spacing(10);
+
+                    for (act_name, range) in act_ranges.clone() {
+                        let mut act_col = column![text(act_name).size(16)].spacing(2);
+                        for wp_idx in range {
+                            let is_active = save.waypoints[diff_idx][wp_idx];
+                            act_col = act_col.push(
+                                button(text(wp_names[wp_idx]).size(12))
+                                    .on_press(Message::ToggleWaypoint(diff_idx, wp_idx))
+                                    .style(if is_active {
+                                        button::success
+                                    } else {
+                                        button::secondary
+                                    })
+                                    .padding(2)
+                                    .width(Length::Fixed(150.0)),
+                            );
+                        }
+                        diff_col = diff_col.push(act_col);
                     }
                     diff_row = diff_row.push(diff_col);
                 }
 
                 column![
-                    text("Waypoints").size(24),
+                    wp_header,
                     Space::new().height(10),
-                    scrollable(diff_row).height(Length::Fill),
+                    scrollable(diff_row).height(Length::Fill)
                 ]
                 .spacing(10)
                 .into()
             }
-            EditorRightTab::Inventory => self
-                .draw_grid(10, 4, 40.0, "Character Inventory (10x4)".to_string())
-                .into(),
+            EditorRightTab::Inventory => column![
+                text(format!("Gold: {}", save.gold)).size(18),
+                self.draw_grid(10, 4, 40.0, "Inventory".to_string()),
+            ]
+            .spacing(10)
+            .into(),
         };
 
         let main_content = row![
