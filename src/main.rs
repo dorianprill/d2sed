@@ -4,7 +4,7 @@ use iced::widget::{
     Space, button, checkbox, column, container, pick_list, row, scrollable, text, text_input,
     tooltip,
 };
-use iced::{Alignment, Element, Length, Task};
+use iced::{Alignment, Element, Length, Size, Task};
 use libd2::core::character_class::CharacterClass;
 use libd2::core::character_file::CharacterStat;
 use std::path::PathBuf;
@@ -13,9 +13,14 @@ mod config;
 mod model;
 mod save;
 
+const INITIAL_WINDOW_WIDTH: f32 = 1100.0;
+const INITIAL_WINDOW_HEIGHT: f32 = 800.0;
+const SKILL_PANE_WIDTH: f32 = 620.0;
+
 pub fn main() -> iced::Result {
     iced::application(App::default, App::update, App::view)
         .title("d2sed - Diablo 2 Save Editor")
+        .window_size(Size::new(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT))
         .run()
 }
 
@@ -284,13 +289,13 @@ impl App {
             }
             Message::GoldChanged(val) => {
                 if let AppState::Editor { save, .. } = &mut self.state {
-                    save.gold = val;
+                    save.set_gold(val);
                 }
                 Task::none()
             }
             Message::StashGoldChanged(val) => {
                 if let AppState::Editor { save, .. } = &mut self.state {
-                    save.stashed_gold = val;
+                    save.set_stashed_gold(val);
                 }
                 Task::none()
             }
@@ -467,7 +472,7 @@ impl App {
                 Space::new().width(60),
                 button("Back").on_press(Message::BackToLaunch).padding(10),
             ]
-            .align_y(Alignment::Center)
+            .align_y(Alignment::End)
             .padding(10),
         )
         .style(|_| container::Style {
@@ -636,14 +641,17 @@ impl App {
         let right_content: Element<Message> = match right_tab {
             EditorRightTab::Skills => {
                 let mut skills_col = column![
-                    row![
-                        text("Skill Trees").size(24),
-                        Space::new().width(Length::Fill),
-                        button("Reset Skills")
-                            .on_press(Message::ResetSkills)
-                            .padding(5),
-                    ]
-                    .align_y(Alignment::Center),
+                    container(
+                        row![
+                            text("Skill Trees").size(24),
+                            Space::new().width(Length::Fill),
+                            button("Reset Skills")
+                                .on_press(Message::ResetSkills)
+                                .padding(5),
+                        ]
+                        .align_y(Alignment::Center),
+                    )
+                    .width(Length::Fixed(SKILL_PANE_WIDTH)),
                     text(format!(
                         "Skill Points Remaining: {}",
                         save.skill_points_remaining
@@ -652,7 +660,7 @@ impl App {
                 ]
                 .spacing(5);
 
-                let mut skill_trees_row = row![].spacing(20);
+                let mut skill_trees_row = row![].spacing(20).width(Length::Fixed(SKILL_PANE_WIDTH));
                 for tree_idx in 0..3 {
                     let mut tree_col = column![].spacing(5);
                     for skill_idx in 0..10 {
@@ -690,19 +698,16 @@ impl App {
                     ("Act I", &[1, 2, 4, 5, 3, 6]),
                     ("Act II", &[9, 10, 11, 12, 13, 14]),
                     ("Act III", &[20, 19, 18, 17, 21, 22]),
-                    ("Act IV", &[25, 27, 26]),
+                    ("Act IV", &[25, 26, 27]),
                     ("Act V", &[35, 36, 37, 38, 39, 40]),
                 ];
 
                 let difficulties = ["Normal", "Nightmare", "Hell"];
 
                 let all_completed = difficulties.iter().enumerate().all(|(d, _)| {
-                    [
-                        1, 2, 4, 5, 3, 6, 9, 10, 11, 12, 13, 14, 20, 19, 18, 17, 21, 22, 25, 27,
-                        26, 35, 36, 37, 38, 39, 40,
-                    ]
-                    .iter()
-                    .all(|&q| (save.quests[d][q] & 1) == 1)
+                    Savegame::VISIBLE_QUEST_INDICES
+                        .iter()
+                        .all(|&q| (save.quests[d][q] & 1) == 1)
                 });
 
                 let quest_header = row![
@@ -718,12 +723,9 @@ impl App {
                 let mut diff_row = row![].spacing(20);
 
                 for (diff_idx, diff_name) in difficulties.iter().enumerate() {
-                    let diff_all_done = [
-                        1, 2, 4, 5, 3, 6, 9, 10, 11, 12, 13, 14, 20, 19, 18, 17, 21, 22, 25, 27,
-                        26, 35, 36, 37, 38, 39, 40,
-                    ]
-                    .iter()
-                    .all(|&q| (save.quests[diff_idx][q] & 1) == 1);
+                    let diff_all_done = Savegame::VISIBLE_QUEST_INDICES
+                        .iter()
+                        .all(|&q| (save.quests[diff_idx][q] & 1) == 1);
 
                     let mut diff_col = column![
                         text(*diff_name).size(20),

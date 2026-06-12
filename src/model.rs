@@ -4,6 +4,41 @@ use libd2::core::character_class::CharacterClass;
 use libd2::core::character_file::{CharacterFile, CharacterStat};
 use std::path::Path;
 
+const QUEST_REWARD_GRANTED: u16 = 0x0001;
+const QUEST_REWARD_PENDING: u16 = 0x0002;
+const QUEST_PRISON_OF_ICE_SCROLL_CONSUMED: u16 = 0x0080;
+const QUEST_LOG_CLOSED: u16 = 0x1000;
+const QUEST_COMPLETION_MASK: u16 = QUEST_REWARD_GRANTED | QUEST_REWARD_PENDING | QUEST_LOG_CLOSED;
+const QUEST_CLOSED_COMPLETE: u16 = QUEST_REWARD_GRANTED | QUEST_LOG_CLOSED;
+const DIFFICULTY_COMPLETED_WORD: u16 = 0x8001;
+const LEGACY_PROGRESSION_OFFSET: usize = 0x25;
+const PROGRESSION_NORMAL_UNLOCKED: u8 = 0x05;
+const PROGRESSION_NIGHTMARE_UNLOCKED: u8 = 0x0a;
+const PROGRESSION_HELL_COMPLETED: u8 = 0x0f;
+const GOLD_MAX_ENCODED: u32 = (1 << 25) - 1;
+
+const ACT_I_COMPLETE: usize = 7;
+const ACT_II_INTRO: usize = 8;
+const ACT_II_COMPLETE: usize = 15;
+const ACT_III_INTRO: usize = 16;
+const ACT_III_COMPLETE: usize = 23;
+const ACT_IV_INTRO: usize = 24;
+const ACT_IV_COMPLETE: usize = 28;
+const ACT_V_INTRO: usize = 32;
+const ACT_V_COMPLETE: usize = 41;
+
+const SISTERS_TO_THE_SLAUGHTER: usize = 6;
+const THE_SEVEN_TOMBS: usize = 14;
+const THE_GUARDIAN: usize = 22;
+const TERRORS_END: usize = 26;
+const PRISON_OF_ICE: usize = 37;
+const EVE_OF_DESTRUCTION: usize = 40;
+
+const VISIBLE_QUEST_INDICES: [usize; 27] = [
+    1, 2, 4, 5, 3, 6, 9, 10, 11, 12, 13, 14, 20, 19, 18, 17, 21, 22, 25, 26, 27, 35, 36, 37, 38,
+    39, 40,
+];
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
 )]
@@ -160,6 +195,8 @@ impl BaseStats {
 }
 
 impl Savegame {
+    pub const VISIBLE_QUEST_INDICES: &'static [usize] = &VISIBLE_QUEST_INDICES;
+
     pub fn load_from_file(path: impl AsRef<Path>) -> Result<Self> {
         let char_file = CharacterFile::load(path)?;
 
@@ -211,7 +248,7 @@ impl Savegame {
             game_version = GameVersion::Resurrected;
         }
 
-        let savegame = Self {
+        let mut savegame = Self {
             name,
             class,
             level: char_file.stat(CharacterStat::Level).unwrap_or(1),
@@ -265,6 +302,7 @@ impl Savegame {
             waypoints,
             game_version,
         };
+        savegame.clamp_gold();
 
         Ok(savegame)
     }
@@ -310,9 +348,9 @@ impl Savegame {
         // Initialize quests with intro/travel markers
         let mut quests = [[0u16; 48]; 3];
         for diff in 0..3 {
-            // Standard "talked to" markers for all acts
-            for &idx in &[0, 7, 8, 15, 16, 23, 24, 31, 32] {
-                quests[diff][idx] = 1;
+            // Standard act-introduction markers for a template character.
+            for &idx in &[0, ACT_II_INTRO, ACT_III_INTRO, ACT_IV_INTRO, ACT_V_INTRO] {
+                quests[diff][idx] = QUEST_REWARD_GRANTED;
             }
         }
 
@@ -379,8 +417,14 @@ impl Savegame {
         write_stat(CharacterStat::MaxStamina, self.max_stamina << 8);
         write_stat(CharacterStat::Level, self.level);
         write_stat(CharacterStat::Experience, self.experience);
-        write_stat(CharacterStat::Gold, self.gold);
-        write_stat(CharacterStat::StashedGold, self.stashed_gold);
+        write_stat(
+            CharacterStat::Gold,
+            self.gold.min(self.max_inventory_gold()),
+        );
+        write_stat(
+            CharacterStat::StashedGold,
+            self.stashed_gold.min(self.max_stash_gold()),
+        );
 
         stats_writer.write_bits(0x1FF, 9);
         let encoded_stats = stats_writer.finish();
@@ -429,6 +473,11 @@ impl Savegame {
             new_raw[0x14..0x14 + len].copy_from_slice(&name_bytes[..len]);
         }
 
+        let mut quests = self.quests;
+        for difficulty in &mut quests {
+            sync_quest_progression(difficulty);
+        }
+
         // Apply Quests overrides
         if let Some(woo_idx) = new_raw.windows(4).position(|window| window == b"Woo!") {
             // Ensure Woo! header magic is correct
@@ -437,7 +486,7 @@ impl Savegame {
             for diff in 0..3 {
                 if offset + 96 <= new_raw.len() {
                     for i in 0..48 {
-                        let word = self.quests[diff][i];
+                        let word = quests[diff][i];
                         new_raw[offset + i * 2] = (word & 0xFF) as u8;
                         new_raw[offset + i * 2 + 1] = (word >> 8) as u8;
                     }
@@ -445,6 +494,7 @@ impl Savegame {
                 }
             }
         }
+        apply_progression_from_quests(&mut new_raw, &quests);
 
         // Apply Waypoints overrides
         if let Some(ws_idx) = new_raw.windows(2).position(|window| window == b"WS") {
@@ -516,6 +566,7 @@ impl Savegame {
     pub fn set_level(&mut self, new_level: u32) {
         let old_level = self.level;
         self.level = new_level.clamp(1, 99);
+        self.clamp_gold();
         self.experience = Self::calculate_experience_for_level(self.level);
         let diff = (self.level as i32) - (old_level as i32);
         if diff > 0 {
@@ -595,6 +646,33 @@ impl Savegame {
         }
     }
 
+    pub fn set_gold(&mut self, gold: u32) {
+        self.gold = gold.min(self.max_inventory_gold());
+    }
+
+    pub fn set_stashed_gold(&mut self, stashed_gold: u32) {
+        self.stashed_gold = stashed_gold.min(self.max_stash_gold());
+    }
+
+    pub fn max_inventory_gold(&self) -> u32 {
+        (self.level.clamp(1, 99) * 10_000).min(GOLD_MAX_ENCODED)
+    }
+
+    pub fn max_stash_gold(&self) -> u32 {
+        let level = self.level.clamp(1, 99);
+        let multiplier = if level <= 30 {
+            level / 10 + 1
+        } else {
+            level / 2 + 1
+        };
+        (multiplier * 50_000).min(GOLD_MAX_ENCODED)
+    }
+
+    fn clamp_gold(&mut self) {
+        self.gold = self.gold.min(self.max_inventory_gold());
+        self.stashed_gold = self.stashed_gold.min(self.max_stash_gold());
+    }
+
     pub fn set_name(&mut self, new_name: String) {
         let name = new_name.chars().take(15).collect::<String>();
         self.name = name;
@@ -628,14 +706,10 @@ impl Savegame {
     }
 
     pub fn toggle_all_quests(&mut self, difficulty: Option<usize>, state: bool) {
-        let quest_indices = [
-            1, 2, 4, 5, 3, 6, 9, 10, 11, 12, 13, 14, 20, 19, 18, 17, 21, 22, 25, 27, 26, 35, 36,
-            37, 38, 39, 40,
-        ];
         match difficulty {
             Some(diff) if diff < 3 => {
-                for &idx in &quest_indices {
-                    let is_completed = (self.quests[diff][idx] & 1) == 1;
+                for &idx in Self::VISIBLE_QUEST_INDICES {
+                    let is_completed = quest_is_completed(self.quests[diff][idx]);
                     if is_completed != state {
                         self.toggle_quest(diff, idx);
                     }
@@ -643,8 +717,8 @@ impl Savegame {
             }
             None => {
                 for diff in 0..3 {
-                    for &idx in &quest_indices {
-                        let is_completed = (self.quests[diff][idx] & 1) == 1;
+                    for &idx in Self::VISIBLE_QUEST_INDICES {
+                        let is_completed = quest_is_completed(self.quests[diff][idx]);
                         if is_completed != state {
                             self.toggle_quest(diff, idx);
                         }
@@ -1089,8 +1163,8 @@ impl Savegame {
     pub fn toggle_quest(&mut self, difficulty: usize, quest_idx: usize) {
         if difficulty < 3 && quest_idx < 48 {
             let current = self.quests[difficulty][quest_idx];
-            if current & 1 == 1 {
-                self.quests[difficulty][quest_idx] &= !0x1003;
+            if quest_is_completed(current) {
+                set_quest_completed(&mut self.quests[difficulty][quest_idx], false);
                 match quest_idx {
                     1 | 9 => {
                         self.skill_points_remaining = self.skill_points_remaining.saturating_sub(1)
@@ -1102,7 +1176,7 @@ impl Savegame {
                     _ => {}
                 }
             } else {
-                self.quests[difficulty][quest_idx] |= 0x1003;
+                set_quest_completed(&mut self.quests[difficulty][quest_idx], true);
                 match quest_idx {
                     1 | 9 => self.skill_points_remaining += 1,
                     25 => self.skill_points_remaining += 2,
@@ -1110,6 +1184,294 @@ impl Savegame {
                     _ => {}
                 }
             }
+            sync_quest_progression(&mut self.quests[difficulty]);
         }
+    }
+}
+
+fn quest_is_completed(word: u16) -> bool {
+    word & QUEST_REWARD_GRANTED != 0
+}
+
+fn set_quest_completed(word: &mut u16, completed: bool) {
+    if completed {
+        *word &= !QUEST_REWARD_PENDING;
+        *word |= QUEST_CLOSED_COMPLETE;
+    } else {
+        *word &= !QUEST_COMPLETION_MASK;
+    }
+}
+
+fn set_bool_word(word: &mut u16, completed: bool) {
+    *word = if completed { QUEST_REWARD_GRANTED } else { 0 };
+}
+
+fn set_difficulty_completed_word(word: &mut u16, completed: bool) {
+    *word = if completed {
+        DIFFICULTY_COMPLETED_WORD
+    } else {
+        0
+    };
+}
+
+fn sync_quest_progression(quests: &mut [u16; 48]) {
+    for &idx in Savegame::VISIBLE_QUEST_INDICES {
+        if quest_is_completed(quests[idx]) {
+            quests[idx] &= !QUEST_REWARD_PENDING;
+            quests[idx] |= QUEST_LOG_CLOSED;
+        }
+    }
+    if quest_is_completed(quests[PRISON_OF_ICE]) {
+        quests[PRISON_OF_ICE] |= QUEST_PRISON_OF_ICE_SCROLL_CONSUMED;
+    } else {
+        quests[PRISON_OF_ICE] &= !QUEST_PRISON_OF_ICE_SCROLL_CONSUMED;
+    }
+
+    let act_i_complete = quest_is_completed(quests[SISTERS_TO_THE_SLAUGHTER]);
+    let act_ii_complete = quest_is_completed(quests[THE_SEVEN_TOMBS]);
+    let act_iii_complete = quest_is_completed(quests[THE_GUARDIAN]);
+    let act_iv_complete = quest_is_completed(quests[TERRORS_END]);
+    let act_v_complete = quest_is_completed(quests[EVE_OF_DESTRUCTION]);
+
+    set_bool_word(&mut quests[ACT_I_COMPLETE], act_i_complete);
+    if act_i_complete {
+        set_bool_word(&mut quests[ACT_II_INTRO], true);
+    }
+
+    set_bool_word(&mut quests[ACT_II_COMPLETE], act_ii_complete);
+    if act_ii_complete {
+        set_bool_word(&mut quests[ACT_III_INTRO], true);
+    }
+
+    set_bool_word(&mut quests[ACT_III_COMPLETE], act_iii_complete);
+    if act_iii_complete {
+        set_bool_word(&mut quests[ACT_IV_INTRO], true);
+    }
+
+    set_bool_word(&mut quests[ACT_IV_COMPLETE], act_iv_complete);
+    if act_iv_complete {
+        set_bool_word(&mut quests[ACT_V_INTRO], true);
+    }
+
+    set_difficulty_completed_word(&mut quests[ACT_V_COMPLETE], act_v_complete);
+}
+
+fn apply_progression_from_quests(raw: &mut [u8], quests: &[[u16; 48]; 3]) {
+    let progression = progression_from_quests(quests);
+    if let Some(byte) = raw.get_mut(LEGACY_PROGRESSION_OFFSET) {
+        *byte = (*byte).max(progression);
+    }
+}
+
+fn progression_from_quests(quests: &[[u16; 48]; 3]) -> u8 {
+    if quest_is_completed(quests[2][EVE_OF_DESTRUCTION]) {
+        PROGRESSION_HELL_COMPLETED
+    } else if quest_is_completed(quests[1][EVE_OF_DESTRUCTION]) {
+        PROGRESSION_NIGHTMARE_UNLOCKED
+    } else if quest_is_completed(quests[0][EVE_OF_DESTRUCTION]) {
+        PROGRESSION_NORMAL_UNLOCKED
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completing_reward_quest_grants_reward_without_leaving_it_pending() {
+        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+
+        save.toggle_quest(0, 25);
+
+        assert!(quest_is_completed(save.quests[0][25]));
+        assert_eq!(save.quests[0][25] & QUEST_REWARD_PENDING, 0);
+        assert_eq!(save.quests[0][25] & QUEST_LOG_CLOSED, QUEST_LOG_CLOSED);
+        assert_eq!(save.skill_points_remaining, 100);
+    }
+
+    #[test]
+    fn toggle_all_quests_sets_hidden_act_progression_words() {
+        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+
+        save.toggle_all_quests(None, true);
+
+        for diff in 0..3 {
+            for &idx in Savegame::VISIBLE_QUEST_INDICES {
+                assert!(
+                    quest_is_completed(save.quests[diff][idx]),
+                    "difficulty {diff} quest index {idx} should be completed"
+                );
+                assert_eq!(
+                    save.quests[diff][idx] & QUEST_REWARD_PENDING,
+                    0,
+                    "difficulty {diff} quest index {idx} should not be reward-pending"
+                );
+                assert_eq!(
+                    save.quests[diff][idx] & QUEST_LOG_CLOSED,
+                    QUEST_LOG_CLOSED,
+                    "difficulty {diff} quest index {idx} should be closed in quest history"
+                );
+            }
+
+            assert_eq!(save.quests[diff][ACT_IV_COMPLETE], QUEST_REWARD_GRANTED);
+            assert_eq!(save.quests[diff][ACT_V_INTRO], QUEST_REWARD_GRANTED);
+            assert_eq!(save.quests[diff][ACT_V_COMPLETE], DIFFICULTY_COMPLETED_WORD);
+            assert_eq!(
+                save.quests[diff][PRISON_OF_ICE] & QUEST_PRISON_OF_ICE_SCROLL_CONSUMED,
+                QUEST_PRISON_OF_ICE_SCROLL_CONSUMED
+            );
+        }
+    }
+
+    #[test]
+    fn prison_of_ice_completion_marks_resistance_scroll_consumed() {
+        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+
+        save.toggle_quest(0, PRISON_OF_ICE);
+
+        assert_eq!(
+            save.quests[0][PRISON_OF_ICE] & QUEST_PRISON_OF_ICE_SCROLL_CONSUMED,
+            QUEST_PRISON_OF_ICE_SCROLL_CONSUMED
+        );
+
+        save.toggle_quest(0, PRISON_OF_ICE);
+
+        assert_eq!(
+            save.quests[0][PRISON_OF_ICE] & QUEST_PRISON_OF_ICE_SCROLL_CONSUMED,
+            0
+        );
+    }
+
+    #[test]
+    fn to_bytes_sanitizes_old_pending_reward_bits_and_syncs_progression() {
+        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+        save.quests[0][25] = QUEST_REWARD_GRANTED | QUEST_REWARD_PENDING | QUEST_LOG_CLOSED;
+        save.quests[0][TERRORS_END] = QUEST_REWARD_GRANTED | QUEST_REWARD_PENDING;
+        save.quests[0][EVE_OF_DESTRUCTION] = QUEST_REWARD_GRANTED | QUEST_REWARD_PENDING;
+
+        let bytes = save.to_bytes().expect("template should serialize");
+        let quests = quest_words(&bytes);
+
+        assert_eq!(quests[0][25] & QUEST_REWARD_PENDING, 0);
+        assert_eq!(quests[0][25] & QUEST_LOG_CLOSED, QUEST_LOG_CLOSED);
+        assert_eq!(quests[0][TERRORS_END] & QUEST_REWARD_PENDING, 0);
+        assert_eq!(quests[0][TERRORS_END] & QUEST_LOG_CLOSED, QUEST_LOG_CLOSED);
+        assert_eq!(quests[0][EVE_OF_DESTRUCTION] & QUEST_REWARD_PENDING, 0);
+        assert_eq!(
+            quests[0][EVE_OF_DESTRUCTION] & QUEST_LOG_CLOSED,
+            QUEST_LOG_CLOSED
+        );
+        assert_eq!(quests[0][ACT_IV_COMPLETE], QUEST_REWARD_GRANTED);
+        assert_eq!(quests[0][ACT_V_INTRO], QUEST_REWARD_GRANTED);
+        assert_eq!(quests[0][ACT_V_COMPLETE], DIFFICULTY_COMPLETED_WORD);
+        assert_eq!(
+            bytes[LEGACY_PROGRESSION_OFFSET],
+            PROGRESSION_NORMAL_UNLOCKED
+        );
+    }
+
+    #[test]
+    fn to_bytes_sets_progression_for_completed_difficulties() {
+        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+
+        save.toggle_all_quests(None, true);
+
+        let bytes = save.to_bytes().expect("template should serialize");
+        let quests = quest_words(&bytes);
+
+        assert_eq!(bytes[LEGACY_PROGRESSION_OFFSET], PROGRESSION_HELL_COMPLETED);
+        for difficulty in &quests {
+            assert_eq!(difficulty[ACT_V_COMPLETE], DIFFICULTY_COMPLETED_WORD);
+            assert_eq!(
+                difficulty[PRISON_OF_ICE] & QUEST_PRISON_OF_ICE_SCROLL_CONSUMED,
+                QUEST_PRISON_OF_ICE_SCROLL_CONSUMED
+            );
+        }
+    }
+
+    #[test]
+    fn gold_setters_clamp_to_legacy_caps() {
+        let mut save = Savegame::generate_template(CharacterClass::Necromancer);
+
+        save.set_gold(9_999_990);
+        save.set_stashed_gold(9_999_999);
+
+        assert_eq!(save.gold, 990_000);
+        assert_eq!(save.stashed_gold, 2_500_000);
+
+        save.set_level(1);
+
+        assert_eq!(save.gold, 10_000);
+        assert_eq!(save.stashed_gold, 50_000);
+    }
+
+    #[test]
+    fn to_bytes_serializes_clamped_gold_values() {
+        let mut save = Savegame::generate_template(CharacterClass::Necromancer);
+        save.gold = 9_999_990;
+        save.stashed_gold = 9_999_999;
+
+        let bytes = save.to_bytes().expect("template should serialize");
+
+        assert_eq!(stat_value(&bytes, CharacterStat::Gold), Some(990_000));
+        assert_eq!(
+            stat_value(&bytes, CharacterStat::StashedGold),
+            Some(2_500_000)
+        );
+    }
+
+    fn quest_words(bytes: &[u8]) -> [[u16; 48]; 3] {
+        let woo_idx = bytes
+            .windows(4)
+            .position(|window| window == b"Woo!")
+            .expect("quest header should exist");
+        let mut offset = woo_idx + 10;
+        let mut quests = [[0u16; 48]; 3];
+        for difficulty in &mut quests {
+            for (idx, word) in difficulty.iter_mut().enumerate() {
+                let pos = offset + idx * 2;
+                *word = u16::from_le_bytes([bytes[pos], bytes[pos + 1]]);
+            }
+            offset += 96;
+        }
+        quests
+    }
+
+    fn stat_value(bytes: &[u8], target: CharacterStat) -> Option<u32> {
+        let marker_offset = bytes.windows(2).position(|window| window == b"gf")?;
+        let mut bit_offset = (marker_offset + 2) * 8;
+        for _ in 0..64 {
+            let id = read_bits(bytes, bit_offset, 9)?;
+            bit_offset += 9;
+            if id == 0x1ff {
+                return None;
+            }
+
+            let stat = CharacterStat::from_id(id as u16)?;
+            let value = read_bits(bytes, bit_offset, stat.bit_width() as usize)?;
+            bit_offset += stat.bit_width() as usize;
+            if stat == target {
+                return Some(value);
+            }
+        }
+        None
+    }
+
+    fn read_bits(bytes: &[u8], bit_offset: usize, count: usize) -> Option<u32> {
+        if bit_offset + count > bytes.len() * 8 {
+            return None;
+        }
+
+        let mut value = 0u32;
+        for index in 0..count {
+            let absolute_bit = bit_offset + index;
+            let byte = *bytes.get(absolute_bit / 8)?;
+            if byte & (1 << (absolute_bit % 8)) != 0 {
+                value |= 1 << index;
+            }
+        }
+        Some(value)
     }
 }
