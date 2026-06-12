@@ -49,6 +49,8 @@ enum Message {
     IncreaseLevel,
     DecreaseLevel,
     SaveCharacter,
+    IncreaseSkill(usize),
+    DecreaseSkill(usize),
 }
 
 impl App {
@@ -124,6 +126,18 @@ impl App {
             Message::DecreaseLevel => {
                 if let AppState::Editor(save) = &mut self.state {
                     save.set_level(save.level.saturating_sub(1));
+                }
+                Task::none()
+            }
+            Message::IncreaseSkill(slot) => {
+                if let AppState::Editor(save) = &mut self.state {
+                    save.increase_skill(slot);
+                }
+                Task::none()
+            }
+            Message::DecreaseSkill(slot) => {
+                if let AppState::Editor(save) = &mut self.state {
+                    save.decrease_skill(slot);
                 }
                 Task::none()
             }
@@ -308,20 +322,41 @@ impl App {
         .padding(10)
         .width(Length::FillPortion(1));
 
-        let right_pane = column![
+        let mut skills_col = column![
             text("Skills").size(24),
-            text(format!(
-                "Skill Points Remaining: {}",
-                save.skill_points_remaining
-            )),
+            text(format!("Skill Points Remaining: {}", save.skill_points_remaining)),
+            Space::new().height(10),
+        ].spacing(5);
+
+        // Group skills into 3 columns (e.g. 10 skills per tree)
+        let mut skill_trees_row = row![].spacing(20);
+        for tree_idx in 0..3 {
+            let mut tree_col = column![].spacing(5);
+            for skill_idx in 0..10 {
+                let slot = tree_idx * 10 + skill_idx;
+                let name = Savegame::get_skill_name(save.class, slot);
+                let value = save.skills[slot];
+
+                let skill_row = row![
+                    text(name).width(Length::Fixed(120.0)),
+                    button("-").on_press(Message::DecreaseSkill(slot)).padding(2),
+                    text(value.to_string()).width(Length::Fixed(24.0)).align_x(Alignment::Center),
+                    button("+").on_press(Message::IncreaseSkill(slot)).padding(2),
+                ].align_y(Alignment::Center);
+
+                tree_col = tree_col.push(skill_row);
+            }
+            skill_trees_row = skill_trees_row.push(tree_col);
+        }
+        skills_col = skills_col.push(skill_trees_row);
+
+        let right_pane = column![
+            skills_col,
             Space::new().height(20),
             text("Quests").size(24),
             Space::new().height(20),
             text("Inventory").size(24),
-        ]
-        .spacing(10)
-        .padding(10)
-        .width(Length::FillPortion(2));
+        ].spacing(10).padding(10).width(Length::FillPortion(2));
 
         let center_content = row![left_pane, right_pane].spacing(20);
 
