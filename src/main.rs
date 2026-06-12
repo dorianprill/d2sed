@@ -51,6 +51,7 @@ enum Message {
     SaveCharacter,
     IncreaseSkill(usize),
     DecreaseSkill(usize),
+    ToggleQuest(usize, usize),
 }
 
 impl App {
@@ -138,6 +139,12 @@ impl App {
             Message::DecreaseSkill(slot) => {
                 if let AppState::Editor(save) = &mut self.state {
                     save.decrease_skill(slot);
+                }
+                Task::none()
+            }
+            Message::ToggleQuest(diff, idx) => {
+                if let AppState::Editor(save) = &mut self.state {
+                    save.toggle_quest(diff, idx);
                 }
                 Task::none()
             }
@@ -350,10 +357,42 @@ impl App {
         }
         skills_col = skills_col.push(skill_trees_row);
 
+        let mut quests_col = column![
+            text("Key Quests").size(24),
+            Space::new().height(10),
+        ].spacing(5);
+
+        let difficulties = ["Normal", "Nightmare", "Hell"];
+        let key_quests = [
+            (1, "Den of Evil (+1 Skill)"),
+            (9, "Radament's Lair (+1 Skill)"),
+            (17, "Lam Esen's Tome (+5 Stats)"),
+            (20, "Golden Bird (+20 Life)"),
+            (25, "Fallen Angel (+2 Skills)"),
+            (37, "Prison of Ice (+10 All Res)"),
+        ];
+
+        let mut diff_row = row![].spacing(20);
+        for (diff_idx, diff_name) in difficulties.iter().enumerate() {
+            let mut diff_col = column![text(*diff_name).size(18)].spacing(5);
+            for &(quest_idx, quest_name) in &key_quests {
+                let is_completed = (save.quests[diff_idx][quest_idx] & 1) == 1;
+                let status_text = if is_completed { "[X]" } else { "[ ]" };
+                
+                diff_col = diff_col.push(
+                    button(text(format!("{} {}", status_text, quest_name)))
+                        .on_press(Message::ToggleQuest(diff_idx, quest_idx))
+                        .style(if is_completed { button::success } else { button::secondary })
+                );
+            }
+            diff_row = diff_row.push(diff_col);
+        }
+        quests_col = quests_col.push(diff_row);
+
         let right_pane = column![
             skills_col,
             Space::new().height(20),
-            text("Quests").size(24),
+            quests_col,
             Space::new().height(20),
             text("Inventory").size(24),
         ].spacing(10).padding(10).width(Length::FillPortion(2));

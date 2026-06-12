@@ -37,9 +37,12 @@ pub struct Savegame {
 
     // Parsed libd2 character file
     pub char_file: Option<CharacterFile>,
-}
 
-pub struct BaseStats {
+    // Quests for Normal, Nightmare, Hell (41 words each)
+    pub quests: [[u16; 41]; 3],
+    }
+
+    pub struct BaseStats {
     pub str: u32,
     pub dex: u32,
     pub vit: u32,
@@ -257,6 +260,37 @@ impl Savegame {
         }
     }
 
+    pub fn toggle_quest(&mut self, difficulty: usize, quest_idx: usize) {
+        if difficulty < 3 && quest_idx < 41 {
+            let current = self.quests[difficulty][quest_idx];
+            // Toggle completed bit (0)
+            if current & 1 == 1 {
+                // Remove completion and requirement completion
+                self.quests[difficulty][quest_idx] &= !3;
+                
+                // Refund points if applicable
+                // Den of Evil (1), Radament (9), Izual (25) -> 1, 1, 2 skill points
+                match quest_idx {
+                    1 | 9 => self.skill_points_remaining = self.skill_points_remaining.saturating_sub(1),
+                    25 => self.skill_points_remaining = self.skill_points_remaining.saturating_sub(2),
+                    17 => self.stat_points_remaining = self.stat_points_remaining.saturating_sub(5), // Lam Esen
+                    _ => {}
+                }
+            } else {
+                // Add completion and requirement completion
+                self.quests[difficulty][quest_idx] |= 3;
+                
+                // Add points if applicable
+                match quest_idx {
+                    1 | 9 => self.skill_points_remaining += 1,
+                    25 => self.skill_points_remaining += 2,
+                    17 => self.stat_points_remaining += 5, // Lam Esen
+                    _ => {}
+                }
+            }
+        }
+    }
+
     pub fn decrease_skill(&mut self, slot: usize) {
         if slot < 30 && self.skills[slot] > 0 {
             self.skills[slot] -= 1;
@@ -328,6 +362,23 @@ impl Savegame {
             skills.copy_from_slice(&char_skills.levels);
         }
 
+        let raw_bytes = char_file.to_bytes();
+        let mut quests = [[0u16; 41]; 3];
+        // Parse quests from raw_bytes. Look for "Woo!"
+        if let Some(woo_idx) = raw_bytes.windows(4).position(|window| window == b"Woo!") {
+            let mut offset = woo_idx + 10; // Skip 10 byte header
+            for diff in 0..3 {
+                if offset + 96 <= raw_bytes.len() {
+                    for i in 0..41 {
+                        let b1 = raw_bytes[offset + i * 2] as u16;
+                        let b2 = raw_bytes[offset + i * 2 + 1] as u16;
+                        quests[diff][i] = b1 | (b2 << 8);
+                    }
+                    offset += 96;
+                }
+            }
+        }
+
         let savegame = Self {
             name,
             class,
@@ -374,8 +425,9 @@ impl Savegame {
                 .unwrap_or_else(|| BaseStats::for_class(class).stamina << 8)
                 >> 8,
             skills,
-            raw_bytes: char_file.to_bytes(),
+            raw_bytes,
             char_file: Some(char_file.clone()),
+            quests,
         };
 
         Ok(savegame)
@@ -405,6 +457,7 @@ impl Savegame {
             skills: [0; 30],
             raw_bytes: Vec::new(),
             char_file: None, // No valid file
+            quests: [[0; 41]; 3],
         }
     }
 
@@ -460,6 +513,21 @@ impl Savegame {
         let post_skills_offset = skills_offset + 32;
         if post_skills_offset < self.raw_bytes.len() {
             new_raw.extend_from_slice(&self.raw_bytes[post_skills_offset..]);
+        }
+
+        // Apply Quests overrides
+        if let Some(woo_idx) = new_raw.windows(4).position(|window| window == b"Woo!") {
+            let mut offset = woo_idx + 10;
+            for diff in 0..3 {
+                if offset + 96 <= new_raw.len() {
+                    for i in 0..41 {
+                        let word = self.quests[diff][i];
+                        new_raw[offset + i * 2] = (word & 0xFF) as u8;
+                        new_raw[offset + i * 2 + 1] = (word >> 8) as u8;
+                    }
+                    offset += 96;
+                }
+            }
         }
 
         fix_header(&mut new_raw);
