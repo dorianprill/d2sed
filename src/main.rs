@@ -331,9 +331,13 @@ impl App {
 
         let mut skills_col = column![
             text("Skills").size(24),
-            text(format!("Skill Points Remaining: {}", save.skill_points_remaining)),
+            text(format!(
+                "Skill Points Remaining: {}",
+                save.skill_points_remaining
+            )),
             Space::new().height(10),
-        ].spacing(5);
+        ]
+        .spacing(5);
 
         // Group skills into 3 columns (e.g. 10 skills per tree)
         let mut skill_trees_row = row![].spacing(20);
@@ -346,10 +350,17 @@ impl App {
 
                 let skill_row = row![
                     text(name).width(Length::Fixed(120.0)),
-                    button("-").on_press(Message::DecreaseSkill(slot)).padding(2),
-                    text(value.to_string()).width(Length::Fixed(24.0)).align_x(Alignment::Center),
-                    button("+").on_press(Message::IncreaseSkill(slot)).padding(2),
-                ].align_y(Alignment::Center);
+                    button("-")
+                        .on_press(Message::DecreaseSkill(slot))
+                        .padding(2),
+                    text(value.to_string())
+                        .width(Length::Fixed(24.0))
+                        .align_x(Alignment::Center),
+                    button("+")
+                        .on_press(Message::IncreaseSkill(slot))
+                        .padding(2),
+                ]
+                .align_y(Alignment::Center);
 
                 tree_col = tree_col.push(skill_row);
             }
@@ -357,10 +368,8 @@ impl App {
         }
         skills_col = skills_col.push(skill_trees_row);
 
-        let mut quests_col = column![
-            text("Key Quests").size(24),
-            Space::new().height(10),
-        ].spacing(5);
+        let mut quests_col =
+            column![text("Key Quests").size(24), Space::new().height(10),].spacing(5);
 
         let difficulties = ["Normal", "Nightmare", "Hell"];
         let key_quests = [
@@ -378,24 +387,61 @@ impl App {
             for &(quest_idx, quest_name) in &key_quests {
                 let is_completed = (save.quests[diff_idx][quest_idx] & 1) == 1;
                 let status_text = if is_completed { "[X]" } else { "[ ]" };
-                
+
                 diff_col = diff_col.push(
                     button(text(format!("{} {}", status_text, quest_name)))
                         .on_press(Message::ToggleQuest(diff_idx, quest_idx))
-                        .style(if is_completed { button::success } else { button::secondary })
+                        .style(if is_completed {
+                            button::success
+                        } else {
+                            button::secondary
+                        }),
                 );
             }
             diff_row = diff_row.push(diff_col);
         }
         quests_col = quests_col.push(diff_row);
 
+        let draw_grid = |cols: usize, rows: usize, cell_size: f32, title: String| {
+            let mut grid_col = column![text(title).size(20), Space::new().height(10)].spacing(5);
+            for _ in 0..rows {
+                let mut row_cells = row![].spacing(2);
+                for _ in 0..cols {
+                    row_cells = row_cells.push(
+                        container(Space::new())
+                            .width(Length::Fixed(cell_size))
+                            .height(Length::Fixed(cell_size))
+                            .style(|_| iced::widget::container::Style {
+                                background: Some(iced::Color::from_rgb(0.2, 0.2, 0.2).into()),
+                                border: iced::Border {
+                                    color: iced::Color::from_rgb(0.4, 0.4, 0.4),
+                                    width: 1.0,
+                                    radius: iced::border::Radius::default(),
+                                },
+                                ..Default::default()
+                            }),
+                    );
+                }
+                grid_col = grid_col.push(row_cells);
+            }
+            grid_col
+        };
+
+        // Determine grid sizes based on expansion / resurrected (assuming Resurrected layout 10x10 stash for now)
+        let inventory_grid = draw_grid(10, 4, 30.0, "Inventory (10x4)".to_string());
+        let stash_grid = draw_grid(10, 10, 30.0, "Stash (10x10)".to_string());
+
         let right_pane = column![
             skills_col,
             Space::new().height(20),
             quests_col,
             Space::new().height(20),
-            text("Inventory").size(24),
-        ].spacing(10).padding(10).width(Length::FillPortion(2));
+            text("Inventory & Stash").size(24),
+            row![inventory_grid, Space::new().width(20), stash_grid].spacing(20),
+        ]
+        .spacing(10)
+        .padding(10)
+        .width(Length::FillPortion(2));
 
         let center_content = row![left_pane, right_pane].spacing(20);
 
