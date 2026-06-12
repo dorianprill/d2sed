@@ -58,8 +58,8 @@ pub struct Savegame {
     // Parsed libd2 character file
     pub char_file: Option<CharacterFile>,
 
-    // Quests for Normal, Nightmare, Hell (41 words each)
-    pub quests: [[u16; 41]; 3],
+    // Quests for Normal, Nightmare, Hell (48 words each as per d2s layout)
+    pub quests: [[u16; 48]; 3],
 
     pub hardcore: bool,
     pub died: bool,
@@ -174,13 +174,12 @@ impl Savegame {
         }
 
         let raw_bytes = char_file.to_bytes();
-        let mut quests = [[0u16; 41]; 3];
-        // Parse quests from raw_bytes. Look for "Woo!"
+        let mut quests = [[0u16; 48]; 3];
         if let Some(woo_idx) = raw_bytes.windows(4).position(|window| window == b"Woo!") {
-            let mut offset = woo_idx + 10; // Skip 10 byte header
+            let mut offset = woo_idx + 10;
             for diff in 0..3 {
                 if offset + 96 <= raw_bytes.len() {
-                    for i in 0..41 {
+                    for i in 0..48 {
                         let b1 = raw_bytes[offset + i * 2] as u16;
                         let b2 = raw_bytes[offset + i * 2 + 1] as u16;
                         quests[diff][i] = b1 | (b2 << 8);
@@ -285,7 +284,6 @@ impl Savegame {
         let len = name_bytes.len().min(15);
         raw[0x14..0x14 + len].copy_from_slice(&name_bytes[..len]);
 
-        // Padding/Criticals
         raw[0x29] = 0x10;
         raw[0x2a] = 0x1e;
         raw[0x34..0x38].fill(0xff);
@@ -293,13 +291,11 @@ impl Savegame {
         // Quests
         raw[0x14b] = 1;
         raw[0x14f..0x153].copy_from_slice(b"Woo!");
-        raw[0x153..0x159].copy_from_slice(&[0x06, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        raw[0x153..0x159].copy_from_slice(&[0x06, 0x00, 0x00, 0x00, 0x2a, 0x01]);
 
         // Waypoints
         raw[0x279..0x279 + 2].copy_from_slice(b"WS");
-        raw[0x279 + 2..0x279 + 6].copy_from_slice(&[0x01, 0x00, 0x00, 0x00]);
-        raw[0x279 + 6..0x279 + 8].copy_from_slice(&[0x50, 0x00]); // 80 bytes len
-        // Fill waypoint headers
+        raw[0x279 + 2..0x279 + 8].copy_from_slice(&[0x06, 0x00, 0x00, 0x00, 0x50, 0x00]);
         for diff in 0..3 {
             let offset = 0x281 + diff * 24;
             raw[offset] = 0x02;
@@ -311,11 +307,20 @@ impl Savegame {
         raw[0x2ca..0x2ca + 2].copy_from_slice(b"w4");
         raw[0x2ca + 2..0x2ca + 4].copy_from_slice(&[0x34, 0x00]); // 52 bytes len
 
+        // Initialize quests with intro/travel markers
+        let mut quests = [[0u16; 48]; 3];
+        for diff in 0..3 {
+            // Standard "talked to" markers for all acts
+            for &idx in &[0, 7, 8, 15, 16, 23, 24, 31, 32] {
+                quests[diff][idx] = 1;
+            }
+        }
+
         Self {
             name,
             class,
             level: 99,
-            experience: 3511147413, // Level 99 exp
+            experience: 3511147413,
             gold: 0,
             stashed_gold: 0,
             strength: base.str,
@@ -333,7 +338,7 @@ impl Savegame {
             skills: [0; 30],
             raw_bytes: raw,
             char_file: None,
-            quests: [[0; 41]; 3],
+            quests,
             hardcore: false,
             died: false,
             waypoints: [[false; 39]; 3],
@@ -351,7 +356,7 @@ impl Savegame {
             .char_file
             .as_ref()
             .and_then(|f| f.skills().map(|s| s.marker_offset))
-            .unwrap_or(stats_offset + 2); // Fallback
+            .unwrap_or(stats_offset + 2);
 
         // Encode Stats
         let mut stats_writer = BitWriter::new();
@@ -366,7 +371,7 @@ impl Savegame {
         write_stat(CharacterStat::Vitality, self.vitality);
         write_stat(CharacterStat::StatPoints, self.stat_points_remaining);
         write_stat(CharacterStat::SkillPoints, self.skill_points_remaining);
-        write_stat(CharacterStat::HitPoints, self.current_hp << 8); // shift 8 for fractional precision
+        write_stat(CharacterStat::HitPoints, self.current_hp << 8);
         write_stat(CharacterStat::MaxHitPoints, self.max_hp << 8);
         write_stat(CharacterStat::Mana, self.current_mana << 8);
         write_stat(CharacterStat::MaxMana, self.max_mana << 8);
@@ -377,40 +382,33 @@ impl Savegame {
         write_stat(CharacterStat::Gold, self.gold);
         write_stat(CharacterStat::StashedGold, self.stashed_gold);
 
-        stats_writer.write_bits(0x1FF, 9); // Terminator
+        stats_writer.write_bits(0x1FF, 9);
         let encoded_stats = stats_writer.finish();
 
-        // Build new raw bytes
         let mut new_raw = Vec::new();
         new_raw.extend_from_slice(&self.raw_bytes[0..stats_offset]);
-        new_raw.extend_from_slice(b"gf"); // Stats magic
+        new_raw.extend_from_slice(b"gf");
         new_raw.extend_from_slice(&encoded_stats);
 
-        // Encode Skills
-        new_raw.extend_from_slice(b"if"); // Skills magic
+        new_raw.extend_from_slice(b"if");
         new_raw.extend_from_slice(&self.skills);
 
-        // Append everything after the original skills block
         let post_skills_offset = skills_offset + 32;
         if post_skills_offset < self.raw_bytes.len() {
             new_raw.extend_from_slice(&self.raw_bytes[post_skills_offset..]);
         } else {
-            // Mandatory JM blocks for items
-            new_raw.extend_from_slice(b"JM"); // Character Items
+            new_raw.extend_from_slice(b"JM");
             new_raw.extend_from_slice(&0u16.to_le_bytes());
-            new_raw.extend_from_slice(b"JM"); // Stash Items
+            new_raw.extend_from_slice(b"JM");
             new_raw.extend_from_slice(&0u16.to_le_bytes());
-            new_raw.extend_from_slice(b"jf"); // Corpse Items
-            new_raw.extend_from_slice(b"kf"); // Golem Items
+            new_raw.extend_from_slice(b"jf");
+            new_raw.extend_from_slice(b"kf");
             new_raw.push(0);
         }
 
-        // Apply Header overrides
         if new_raw.len() >= 0x2b {
             new_raw[0x2b] = self.level as u8;
             new_raw[0x28] = self.class as u8;
-
-            // Status flags
             let mut status = new_raw[0x24];
             if self.hardcore {
                 status |= 0x04;
@@ -422,9 +420,9 @@ impl Savegame {
             } else {
                 status &= !0x08;
             }
+            status |= 0x20; // Always set Expansion bit for modern saves
             new_raw[0x24] = status;
 
-            // Name
             let name_bytes = self.name.as_bytes();
             let len = name_bytes.len().min(15);
             new_raw[0x14..0x14 + 16].fill(0);
@@ -433,10 +431,12 @@ impl Savegame {
 
         // Apply Quests overrides
         if let Some(woo_idx) = new_raw.windows(4).position(|window| window == b"Woo!") {
+            // Ensure Woo! header magic is correct
+            new_raw[woo_idx + 4..woo_idx + 10].copy_from_slice(&[6, 0, 0, 0, 0x2a, 0x01]);
             let mut offset = woo_idx + 10;
             for diff in 0..3 {
                 if offset + 96 <= new_raw.len() {
-                    for i in 0..41 {
+                    for i in 0..48 {
                         let word = self.quests[diff][i];
                         new_raw[offset + i * 2] = (word & 0xFF) as u8;
                         new_raw[offset + i * 2 + 1] = (word >> 8) as u8;
@@ -448,38 +448,39 @@ impl Savegame {
 
         // Apply Waypoints overrides
         if let Some(ws_idx) = new_raw.windows(2).position(|window| window == b"WS") {
+            new_raw[ws_idx + 2..ws_idx + 8].copy_from_slice(&[6, 0, 0, 0, 0x50, 0x00]);
             let mut offset = ws_idx + 8;
             for diff in 0..3 {
                 if offset + 24 <= new_raw.len() {
+                    new_raw[offset] = 0x02;
+                    new_raw[offset + 1] = 0x01;
                     let data_offset = offset + 2;
+                    // Clear existing bits first
+                    new_raw[data_offset..data_offset + 5].fill(0);
                     for i in 0..39 {
                         let byte_idx = i / 8;
                         let bit_idx = i % 8;
                         if self.waypoints[diff][i] {
                             new_raw[data_offset + byte_idx] |= 1 << bit_idx;
-                        } else {
-                            new_raw[data_offset + byte_idx] &= !(1 << bit_idx);
                         }
                     }
                     offset += 24;
                 }
             }
+            new_raw[ws_idx + 80] = 0x01; // Trailer
         }
 
         fix_header(&mut new_raw);
-
         Ok(new_raw)
     }
 
     pub fn save_to_file(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
-
         if path.exists() {
             let mut backup_path = path.to_path_buf();
             backup_path.set_extension("d2s.bak");
             std::fs::copy(path, &backup_path).context("Failed to create backup file")?;
         }
-
         let bytes = self.to_bytes()?;
         std::fs::write(path, bytes).context("Failed to write savegame file")?;
         Ok(())
@@ -516,7 +517,6 @@ impl Savegame {
         let old_level = self.level;
         self.level = new_level.clamp(1, 99);
         self.experience = Self::calculate_experience_for_level(self.level);
-
         let diff = (self.level as i32) - (old_level as i32);
         if diff > 0 {
             self.stat_points_remaining += (diff as u32) * 5;
@@ -528,7 +528,6 @@ impl Savegame {
             } else {
                 self.reset_stats();
             }
-
             let required_reduction_skills = -diff as u32;
             if self.skill_points_remaining >= required_reduction_skills {
                 self.skill_points_remaining -= required_reduction_skills;
@@ -543,7 +542,6 @@ impl Savegame {
         if actual_amount == 0 {
             return;
         }
-
         match stat {
             CharacterStat::Strength => self.strength += actual_amount,
             CharacterStat::Dexterity => self.dexterity += actual_amount,
@@ -561,13 +559,11 @@ impl Savegame {
             }
             _ => return,
         }
-
         self.stat_points_remaining -= actual_amount;
     }
 
     pub fn decrease_stat(&mut self, stat: CharacterStat, amount: u32) {
         let base = BaseStats::for_class(self.class);
-
         match stat {
             CharacterStat::Strength => {
                 let diff = self.strength.saturating_sub(base.str).min(amount);
@@ -636,7 +632,6 @@ impl Savegame {
             1, 2, 4, 5, 3, 6, 9, 10, 11, 12, 13, 14, 20, 19, 18, 17, 21, 22, 25, 27, 26, 35, 36,
             37, 38, 39, 40,
         ];
-
         match difficulty {
             Some(diff) if diff < 3 => {
                 for &idx in &quest_indices {
@@ -931,19 +926,17 @@ impl Savegame {
     }
 
     pub fn skill_requirements(class: CharacterClass, slot: usize) -> (u32, Vec<usize>) {
-        // Returns (level_requirement, list_of_prerequisite_slots)
         match class {
             CharacterClass::Amazon => match slot {
-                // Bow and Crossbow
-                0 => (1, vec![]),        // Magic Arrow
-                1 => (1, vec![]),        // Fire Arrow
-                5 => (6, vec![0]),       // Cold Arrow
-                6 => (12, vec![0]),      // Multiple Shot
-                10 => (12, vec![1]),     // Exploding Arrow
-                16 => (18, vec![0, 6]),  // Guided Arrow
-                21 => (24, vec![1, 10]), // Immolation Arrow
-                25 => (30, vec![5, 16]), // Freezing Arrow
-                20 => (24, vec![6]),     // Strafe
+                0 => (1, vec![]),
+                1 => (1, vec![]),
+                5 => (6, vec![0]),
+                6 => (12, vec![0]),
+                10 => (12, vec![1]),
+                16 => (18, vec![0, 6]),
+                21 => (24, vec![1, 10]),
+                25 => (30, vec![5, 16]),
+                20 => (24, vec![6]),
                 _ => (1, vec![]),
             },
             _ => (1, vec![]),
@@ -954,18 +947,15 @@ impl Savegame {
         if slot >= 30 || self.skill_points_remaining == 0 || self.skills[slot] >= 20 {
             return false;
         }
-
         let (level_req, prereqs) = Self::skill_requirements(self.class, slot);
         if self.level < level_req {
             return false;
         }
-
         for &prereq in &prereqs {
             if self.skills[prereq] == 0 {
                 return false;
             }
         }
-
         true
     }
 
@@ -975,7 +965,6 @@ impl Savegame {
             self.skill_points_remaining -= 1;
         }
     }
-
     pub fn decrease_skill(&mut self, slot: usize) {
         if slot < 30 && self.skills[slot] > 0 {
             self.skills[slot] -= 1;
@@ -1098,10 +1087,10 @@ impl Savegame {
     }
 
     pub fn toggle_quest(&mut self, difficulty: usize, quest_idx: usize) {
-        if difficulty < 3 && quest_idx < 41 {
+        if difficulty < 3 && quest_idx < 48 {
             let current = self.quests[difficulty][quest_idx];
             if current & 1 == 1 {
-                self.quests[difficulty][quest_idx] &= !3;
+                self.quests[difficulty][quest_idx] &= !0x1003;
                 match quest_idx {
                     1 | 9 => {
                         self.skill_points_remaining = self.skill_points_remaining.saturating_sub(1)
@@ -1113,7 +1102,7 @@ impl Savegame {
                     _ => {}
                 }
             } else {
-                self.quests[difficulty][quest_idx] |= 3;
+                self.quests[difficulty][quest_idx] |= 0x1003;
                 match quest_idx {
                     1 | 9 => self.skill_points_remaining += 1,
                     25 => self.skill_points_remaining += 2,
