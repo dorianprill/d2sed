@@ -4,7 +4,9 @@ use libd2::core::character_class::CharacterClass;
 use libd2::core::character_file::{CharacterFile, CharacterStat};
 use std::path::Path;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
+)]
 pub enum GameVersion {
     #[default]
     Legacy, // 1.10 - 1.14d
@@ -193,7 +195,6 @@ impl Savegame {
             let mut offset = ws_idx + 8; // Skip WS, unknown, and length
             for diff in 0..3 {
                 if offset + 24 <= raw_bytes.len() {
-                    // Each diff block is 24 bytes: 2 bytes header (0x02 0x01) + 22 bytes data
                     let data_offset = offset + 2;
                     for i in 0..39 {
                         let byte_idx = i / 8;
@@ -271,7 +272,7 @@ impl Savegame {
 
     pub fn generate_template(class: CharacterClass) -> Self {
         let base = BaseStats::for_class(class);
-        let name = class.to_string(); // class names as suggested
+        let name = class.to_string();
 
         let mut raw = vec![0u8; 0x2fd];
         raw[0..4].copy_from_slice(&0xaa55_aa55_u32.to_le_bytes()); // D2S_MAGIC
@@ -284,7 +285,7 @@ impl Savegame {
         let len = name_bytes.len().min(15);
         raw[0x14..0x14 + len].copy_from_slice(&name_bytes[..len]);
 
-        // Emulate `build_legacy_fixed_pre_stats_block` criticals
+        // Padding/Criticals
         raw[0x29] = 0x10;
         raw[0x2a] = 0x1e;
         raw[0x34..0x38].fill(0xff);
@@ -298,10 +299,17 @@ impl Savegame {
         raw[0x279..0x279 + 2].copy_from_slice(b"WS");
         raw[0x279 + 2..0x279 + 6].copy_from_slice(&[0x01, 0x00, 0x00, 0x00]);
         raw[0x279 + 6..0x279 + 8].copy_from_slice(&[0x50, 0x00]); // 80 bytes len
+        // Fill waypoint headers
+        for diff in 0..3 {
+            let offset = 0x281 + diff * 24;
+            raw[offset] = 0x02;
+            raw[offset + 1] = 0x01;
+        }
+        raw[0x2c9] = 0x01; // Trailer
 
         // NPC
-        raw[0x2cd..0x2cd + 2].copy_from_slice(b"w4");
-        raw[0x2cd + 2..0x2cd + 4].copy_from_slice(&[0x34, 0x00]); // 52 bytes len
+        raw[0x2ca..0x2ca + 2].copy_from_slice(b"w4");
+        raw[0x2ca + 2..0x2ca + 4].copy_from_slice(&[0x34, 0x00]); // 52 bytes len
 
         Self {
             name,
@@ -392,7 +400,7 @@ impl Savegame {
             new_raw.extend_from_slice(&0u16.to_le_bytes());
             new_raw.extend_from_slice(b"JM"); // Stash Items
             new_raw.extend_from_slice(&0u16.to_le_bytes());
-            new_raw.extend_from_slice(b"jf"); // Corpse Items (optional but good for compat)
+            new_raw.extend_from_slice(b"jf"); // Corpse Items
             new_raw.extend_from_slice(b"kf"); // Golem Items
             new_raw.push(0);
         }
@@ -415,6 +423,12 @@ impl Savegame {
                 status &= !0x08;
             }
             new_raw[0x24] = status;
+
+            // Name
+            let name_bytes = self.name.as_bytes();
+            let len = name_bytes.len().min(15);
+            new_raw[0x14..0x14 + 16].fill(0);
+            new_raw[0x14..0x14 + len].copy_from_slice(&name_bytes[..len]);
         }
 
         // Apply Quests overrides
@@ -460,7 +474,6 @@ impl Savegame {
     pub fn save_to_file(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
 
-        // Safety: Always backup before saving if the file already exists
         if path.exists() {
             let mut backup_path = path.to_path_buf();
             backup_path.set_extension("d2s.bak");
@@ -476,9 +489,9 @@ impl Savegame {
         let level_points = self.level.saturating_sub(1) * 5;
         let mut quest_points = 0;
         for diff in 0..3 {
-            if (self.quests[diff][19] & 1) == 1 {
+            if (self.quests[diff][17] & 1) == 1 {
                 quest_points += 5;
-            } // Lam Esen
+            }
         }
         level_points + quest_points
     }
@@ -504,7 +517,6 @@ impl Savegame {
         self.level = new_level.clamp(1, 99);
         self.experience = Self::calculate_experience_for_level(self.level);
 
-        // Adjust remaining stat points
         let diff = (self.level as i32) - (old_level as i32);
         if diff > 0 {
             self.stat_points_remaining += (diff as u32) * 5;
@@ -590,13 +602,6 @@ impl Savegame {
     pub fn set_name(&mut self, new_name: String) {
         let name = new_name.chars().take(15).collect::<String>();
         self.name = name;
-
-        if self.raw_bytes.len() > 0x14 + 16 {
-            let name_bytes = self.name.as_bytes();
-            let len = name_bytes.len().min(15);
-            self.raw_bytes[0x14..0x14 + 16].fill(0);
-            self.raw_bytes[0x14..0x14 + len].copy_from_slice(&name_bytes[..len]);
-        }
     }
 
     pub fn reset_skills(&mut self) {
@@ -628,8 +633,8 @@ impl Savegame {
 
     pub fn toggle_all_quests(&mut self, difficulty: Option<usize>, state: bool) {
         let quest_indices = [
-            0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19, 20, 21, 24, 25, 26, 32, 33, 34,
-            35, 36, 37,
+            1, 2, 4, 5, 3, 6, 9, 10, 11, 12, 13, 14, 20, 19, 18, 17, 21, 22, 25, 27, 26, 35, 36,
+            37, 38, 39, 40,
         ];
 
         match difficulty {
@@ -657,33 +662,33 @@ impl Savegame {
 
     pub fn get_quest_name(idx: usize) -> &'static str {
         match idx {
-            0 => "Den of Evil",
-            1 => "Sisters' Burial Grounds",
-            2 => "Tools of the Trade",
-            3 => "The Search for Cain",
-            4 => "The Forgotten Tower",
-            5 => "Sisters to the Slaughter",
-            8 => "Radament's Lair",
-            9 => "The Horadric Staff",
-            10 => "Tainted Sun",
-            11 => "Arcane Sanctuary",
-            12 => "The Summoner",
-            13 => "The Seven Tombs",
-            16 => "The Golden Bird",
-            17 => "Blade of the Old Religion",
+            1 => "Den of Evil",
+            2 => "Sisters' Burial Grounds",
+            3 => "Tools of the Trade",
+            4 => "The Search for Cain",
+            5 => "The Forgotten Tower",
+            6 => "Sisters to the Slaughter",
+            9 => "Radament's Lair",
+            10 => "The Horadric Staff",
+            11 => "Tainted Sun",
+            12 => "Arcane Sanctuary",
+            13 => "The Summoner",
+            14 => "The Seven Tombs",
+            17 => "Lam Esen's Tome",
             18 => "Khalim's Will",
-            19 => "Lam Esen's Tome",
-            20 => "The Blackened Temple",
-            21 => "The Guardian",
-            24 => "The Fallen Angel",
-            25 => "Terror's End",
-            26 => "Hellforge",
-            32 => "Siege on Harrogath",
-            33 => "Rescue on Mount Arreat",
-            34 => "Prison of Ice",
-            35 => "Betrayal of Harrogath",
-            36 => "Rite of Passage",
-            37 => "Eve of Destruction",
+            19 => "Blade of the Old Religion",
+            20 => "The Golden Bird",
+            21 => "The Blackened Temple",
+            22 => "The Guardian",
+            25 => "The Fallen Angel",
+            26 => "Terror's End",
+            27 => "Hellforge",
+            35 => "Siege on Harrogath",
+            36 => "Rescue on Mount Arreat",
+            37 => "Prison of Ice",
+            38 => "Betrayal of Harrogath",
+            39 => "Rite of Passage",
+            40 => "Eve of Destruction",
             _ => "Unknown Quest",
         }
     }
@@ -982,7 +987,6 @@ impl Savegame {
         if level <= 1 {
             return 0;
         }
-        // Simple approximate polynomial for D2 exp curve up to 99
         let breakpoints: [u64; 100] = [
             0,
             500,
@@ -1085,45 +1089,35 @@ impl Savegame {
             70769493134,
             82001460593,
         ];
-
         let exp = if level <= 99 {
             breakpoints[level as usize - 1]
         } else {
             breakpoints[98]
         };
-
         std::cmp::min(exp, u32::MAX as u64) as u32
     }
 
     pub fn toggle_quest(&mut self, difficulty: usize, quest_idx: usize) {
         if difficulty < 3 && quest_idx < 41 {
             let current = self.quests[difficulty][quest_idx];
-            // Toggle completed bit (0)
             if current & 1 == 1 {
-                // Remove completion and requirement completion
                 self.quests[difficulty][quest_idx] &= !3;
-
-                // Refund points if applicable
-                // Den of Evil (0), Radament (8), Izual (24)
                 match quest_idx {
-                    0 | 8 => {
+                    1 | 9 => {
                         self.skill_points_remaining = self.skill_points_remaining.saturating_sub(1)
                     }
-                    24 => {
+                    25 => {
                         self.skill_points_remaining = self.skill_points_remaining.saturating_sub(2)
                     }
-                    19 => self.stat_points_remaining = self.stat_points_remaining.saturating_sub(5), // Lam Esen
+                    17 => self.stat_points_remaining = self.stat_points_remaining.saturating_sub(5),
                     _ => {}
                 }
             } else {
-                // Add completion and requirement completion
                 self.quests[difficulty][quest_idx] |= 3;
-
-                // Add points if applicable
                 match quest_idx {
-                    0 | 8 => self.skill_points_remaining += 1,
-                    24 => self.skill_points_remaining += 2,
-                    19 => self.stat_points_remaining += 5, // Lam Esen
+                    1 | 9 => self.skill_points_remaining += 1,
+                    25 => self.skill_points_remaining += 2,
+                    17 => self.stat_points_remaining += 5,
                     _ => {}
                 }
             }
