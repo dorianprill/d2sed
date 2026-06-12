@@ -1,9 +1,11 @@
-use iced::widget::{button, column, container, row, text, text_input, Space};
+use iced::widget::{Space, button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length, Task};
 use libd2::core::character_class::CharacterClass;
+use libd2::core::character_file::CharacterStat;
 use std::path::PathBuf;
 
 mod model;
+mod save;
 use model::Savegame;
 
 pub fn main() -> iced::Result {
@@ -41,6 +43,12 @@ enum Message {
     TemplateSelected(CharacterClass),
     LoadCharacter,
     BackToLaunch,
+    IncreaseStat(CharacterStat),
+    DecreaseStat(CharacterStat),
+    ResetStats,
+    IncreaseLevel,
+    DecreaseLevel,
+    SaveCharacter,
 }
 
 impl App {
@@ -74,9 +82,14 @@ impl App {
                 if let Some(class) = self.selected_template {
                     self.state = AppState::Editor(Savegame::generate_template(class));
                 } else if !self.file_path.is_empty() {
-                    // TODO: Actually load and parse the file here
-                    // For now, generate a fallback template
-                    self.state = AppState::Editor(Savegame::generate_template(CharacterClass::Amazon));
+                    match Savegame::load_from_file(&self.file_path) {
+                        Ok(savegame) => {
+                            self.state = AppState::Editor(savegame);
+                        }
+                        Err(e) => {
+                            println!("Failed to load savegame: {:?}", e); // TODO: show in UI
+                        }
+                    }
                 }
                 Task::none()
             }
@@ -84,22 +97,68 @@ impl App {
                 self.state = AppState::LaunchScreen;
                 Task::none()
             }
+            Message::IncreaseStat(stat) => {
+                if let AppState::Editor(save) = &mut self.state {
+                    save.increase_stat(stat);
+                }
+                Task::none()
+            }
+            Message::DecreaseStat(stat) => {
+                if let AppState::Editor(save) = &mut self.state {
+                    save.decrease_stat(stat);
+                }
+                Task::none()
+            }
+            Message::ResetStats => {
+                if let AppState::Editor(save) = &mut self.state {
+                    save.reset_stats();
+                }
+                Task::none()
+            }
+            Message::IncreaseLevel => {
+                if let AppState::Editor(save) = &mut self.state {
+                    save.set_level(save.level + 1);
+                }
+                Task::none()
+            }
+            Message::DecreaseLevel => {
+                if let AppState::Editor(save) = &mut self.state {
+                    save.set_level(save.level.saturating_sub(1));
+                }
+                Task::none()
+            }
+            Message::SaveCharacter => {
+                if let AppState::Editor(save) = &self.state {
+                    if save.char_file.is_some() {
+                        let path = &self.file_path;
+                        if !path.is_empty() {
+                            match save.save_to_file(path) {
+                                Ok(_) => println!("Successfully saved {}", path), // TODO: UI log
+                                Err(e) => println!("Failed to save: {:?}", e),
+                            }
+                        }
+                    } else {
+                        println!("Saving templates is not fully supported yet.");
+                    }
+                }
+                Task::none()
+            }
         }
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         match &self.state {
             AppState::LaunchScreen => self.view_launch_screen(),
             AppState::Editor(save) => self.view_editor(save),
         }
     }
 
-    fn view_launch_screen(&self) -> Element<Message> {
+    fn view_launch_screen(&self) -> Element<'_, Message> {
         let path_input = text_input("Path to .d2s file...", &self.file_path)
             .on_input(Message::FilePathChanged)
             .on_submit(Message::LoadCharacter)
             .padding(10);
-            
+
         let browse_btn = button("Browse...")
             .padding(10)
             .on_press(Message::BrowseFile);
@@ -125,7 +184,7 @@ impl App {
             let mut btn = button(text(class.to_string()))
                 .padding(10)
                 .on_press(Message::TemplateSelected(class));
-                
+
             if is_selected {
                 btn = btn.style(button::success);
             }
@@ -135,7 +194,9 @@ impl App {
         let can_load = !self.file_path.is_empty() || self.selected_template.is_some();
         let mut load_btn = button("Load Character").padding(15);
         if can_load {
-            load_btn = load_btn.on_press(Message::LoadCharacter).style(button::primary);
+            load_btn = load_btn
+                .on_press(Message::LoadCharacter)
+                .style(button::primary);
         }
 
         let content = column![
@@ -162,46 +223,113 @@ impl App {
             .into()
     }
 
-    fn view_editor(&self, save: &Savegame) -> Element<Message> {
+    fn view_editor(&self, save: &Savegame) -> Element<'_, Message> {
         let top_pane = row![
-            button("Save .d2s").padding(10), // TODO
-            button("Back to Launch").on_press(Message::BackToLaunch).padding(10),
+            button("Save .d2s")
+                .on_press(Message::SaveCharacter)
+                .padding(10),
+            button("Back to Launch")
+                .on_press(Message::BackToLaunch)
+                .padding(10),
             Space::new().width(Length::Fill),
-            text(format!("Loaded: {} (Level {} {})", save.name, save.level, save.class)).size(20)
-        ].spacing(10).align_y(Alignment::Center).padding(10);
+            text(format!("Loaded: {} (Class: {})", save.name, save.class)).size(20)
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .padding(10);
+
+        let stat_row = |name: String, value: u32, stat: CharacterStat| {
+            row![
+                text(name).width(Length::Fixed(100.0)),
+                button("-").on_press(Message::DecreaseStat(stat)).padding(5),
+                text(value.to_string())
+                    .width(Length::Fixed(40.0))
+                    .align_x(Alignment::Center),
+                button("+").on_press(Message::IncreaseStat(stat)).padding(5),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+        };
 
         let left_pane = column![
             text("Character Overview").size(24),
-            text(format!("Strength: {}", save.strength)),
-            text(format!("Dexterity: {}", save.dexterity)),
-            text(format!("Vitality: {}", save.vitality)),
-            text(format!("Energy: {}", save.energy)),
-            text(format!("Stat Points Remaining: {}", save.stat_points_remaining)),
+            row![
+                text("Level:").width(Length::Fixed(100.0)),
+                button("-").on_press(Message::DecreaseLevel).padding(5),
+                text(save.level.to_string())
+                    .width(Length::Fixed(40.0))
+                    .align_x(Alignment::Center),
+                button("+").on_press(Message::IncreaseLevel).padding(5),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+            text(format!("Experience: {}", save.experience)),
+            Space::new().height(20),
+            stat_row(
+                "Strength:".to_string(),
+                save.strength,
+                CharacterStat::Strength
+            ),
+            stat_row(
+                "Dexterity:".to_string(),
+                save.dexterity,
+                CharacterStat::Dexterity
+            ),
+            stat_row(
+                "Vitality:".to_string(),
+                save.vitality,
+                CharacterStat::Vitality
+            ),
+            stat_row("Energy:".to_string(), save.energy, CharacterStat::Energy),
+            Space::new().height(10),
+            row![
+                text(format!(
+                    "Stat Points Remaining: {}",
+                    save.stat_points_remaining
+                )),
+                button("Reset Stats")
+                    .on_press(Message::ResetStats)
+                    .padding(5)
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+            Space::new().height(20),
+            text(format!("HP: {} / {}", save.current_hp, save.max_hp)),
+            text(format!("Mana: {} / {}", save.current_mana, save.max_mana)),
+            text(format!(
+                "Stamina: {} / {}",
+                save.current_stamina, save.max_stamina
+            )),
             Space::new().height(20),
             text("Detailed Stats").size(24),
             text("Stash").size(24),
-        ].spacing(10).padding(10).width(Length::FillPortion(1));
+        ]
+        .spacing(10)
+        .padding(10)
+        .width(Length::FillPortion(1));
 
         let right_pane = column![
             text("Skills").size(24),
-            text(format!("Skill Points Remaining: {}", save.skill_points_remaining)),
+            text(format!(
+                "Skill Points Remaining: {}",
+                save.skill_points_remaining
+            )),
             Space::new().height(20),
             text("Quests").size(24),
             Space::new().height(20),
             text("Inventory").size(24),
-        ].spacing(10).padding(10).width(Length::FillPortion(2));
+        ]
+        .spacing(10)
+        .padding(10)
+        .width(Length::FillPortion(2));
 
         let center_content = row![left_pane, right_pane].spacing(20);
 
-        let bottom_pane = container(
-            text("Log: Initialized editor.").size(14)
-        ).padding(10).width(Length::Fill);
+        let bottom_pane = container(text("Log: Editor active.").size(14))
+            .padding(10)
+            .width(Length::Fill);
 
-        let main_layout = column![
-            top_pane,
-            center_content.height(Length::Fill),
-            bottom_pane,
-        ];
+        let main_layout = column![top_pane, center_content.height(Length::Fill), bottom_pane,];
 
         container(main_layout)
             .width(Length::Fill)
