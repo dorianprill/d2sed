@@ -1,5 +1,5 @@
 use crate::save::{BitWriter, fix_header};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use libd2::core::character_class::CharacterClass;
 use libd2::core::character_file::{CharacterFile, CharacterStat};
 use std::path::Path;
@@ -40,6 +40,12 @@ pub struct Savegame {
 
     // Quests for Normal, Nightmare, Hell (41 words each)
     pub quests: [[u16; 41]; 3],
+
+    pub hardcore: bool,
+    pub died: bool,
+
+    // Waypoints for Normal, Nightmare, Hell (39 waypoints total, stored as bits)
+    pub waypoints: [[bool; 39]; 3],
 }
 
 pub struct BaseStats {
@@ -421,8 +427,48 @@ impl Savegame {
         }
     }
 
+    pub fn skill_requirements(class: CharacterClass, slot: usize) -> (u32, Vec<usize>) {
+        // Returns (level_requirement, list_of_prerequisite_slots)
+        match class {
+            CharacterClass::Amazon => match slot {
+                // Bow and Crossbow
+                0 => (1, vec![]),        // Magic Arrow
+                1 => (1, vec![]),        // Fire Arrow
+                5 => (6, vec![0]),       // Cold Arrow
+                6 => (12, vec![0]),      // Multiple Shot
+                10 => (12, vec![1]),     // Exploding Arrow
+                16 => (18, vec![0, 6]),  // Guided Arrow
+                21 => (24, vec![1, 10]), // Immolation Arrow
+                25 => (30, vec![5, 16]), // Freezing Arrow
+                20 => (24, vec![6]),     // Strafe
+                // ... simplified for others
+                _ => (1, vec![]),
+            },
+            _ => (1, vec![]), // TODO: full mapping
+        }
+    }
+
+    pub fn can_increase_skill(&self, slot: usize) -> bool {
+        if slot >= 30 || self.skill_points_remaining == 0 || self.skills[slot] >= 20 {
+            return false;
+        }
+
+        let (level_req, prereqs) = Self::skill_requirements(self.class, slot);
+        if self.level < level_req {
+            return false;
+        }
+
+        for &prereq in &prereqs {
+            if self.skills[prereq] == 0 {
+                return false;
+            }
+        }
+
+        true
+    }
+
     pub fn increase_skill(&mut self, slot: usize) {
-        if slot < 30 && self.skill_points_remaining > 0 && self.skills[slot] < 20 {
+        if self.can_increase_skill(slot) {
             self.skills[slot] += 1;
             self.skill_points_remaining -= 1;
         }
@@ -670,6 +716,24 @@ impl Savegame {
             }
         }
 
+        let mut waypoints = [[false; 39]; 3];
+        if let Some(ws_idx) = raw_bytes.windows(2).position(|window| window == b"WS") {
+            let mut offset = ws_idx + 8; // Skip WS, unknown, and length
+            for diff in 0..3 {
+                if offset + 24 <= raw_bytes.len() {
+                    // Each diff block is 24 bytes: 2 bytes header (0x02 0x01) + 22 bytes data
+                    let data_offset = offset + 2;
+                    for i in 0..39 {
+                        let byte_idx = i / 8;
+                        let bit_idx = i % 8;
+                        waypoints[diff][i] =
+                            (raw_bytes[data_offset + byte_idx] & (1 << bit_idx)) != 0;
+                    }
+                    offset += 24;
+                }
+            }
+        }
+
         let savegame = Self {
             name,
             class,
@@ -719,6 +783,9 @@ impl Savegame {
             raw_bytes,
             char_file: Some(char_file.clone()),
             quests,
+            hardcore: header.status.hardcore,
+            died: header.status.died,
+            waypoints,
         };
 
         Ok(savegame)
@@ -726,8 +793,40 @@ impl Savegame {
 
     pub fn generate_template(class: CharacterClass) -> Self {
         let base = BaseStats::for_class(class);
+        let name = format!("Template{}", class);
+
+        let mut raw = vec![0u8; 0x2fd];
+        raw[0..4].copy_from_slice(&0xaa55_aa55_u32.to_le_bytes()); // D2S_MAGIC
+        raw[4..8].copy_from_slice(&0x60_u32.to_le_bytes()); // VERSION_OFFSET
+        raw[0x28] = class as u8; // LEGACY_CLASS_OFFSET
+        raw[0x2b] = 99; // LEGACY_LEVEL_OFFSET
+        raw[0x24] = 0x20; // Status: Expansion (1 << 5)
+
+        let name_bytes = name.as_bytes();
+        let len = name_bytes.len().min(15);
+        raw[0x14..0x14 + len].copy_from_slice(&name_bytes[..len]);
+
+        // Emulate `build_legacy_fixed_pre_stats_block` criticals
+        raw[0x29] = 0x10;
+        raw[0x2a] = 0x1e;
+        raw[0x34..0x38].fill(0xff);
+
+        // Quests
+        raw[0x14b] = 1;
+        raw[0x14f..0x153].copy_from_slice(b"Woo!");
+        raw[0x153..0x159].copy_from_slice(&[0x06, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+        // Waypoints
+        raw[0x279..0x279 + 2].copy_from_slice(b"WS");
+        raw[0x279 + 2..0x279 + 6].copy_from_slice(&[0x01, 0x00, 0x00, 0x00]);
+        raw[0x279 + 6..0x279 + 8].copy_from_slice(&[0x50, 0x00]); // 80 bytes len
+
+        // NPC
+        raw[0x2cd..0x2cd + 2].copy_from_slice(b"w4");
+        raw[0x2cd + 2..0x2cd + 4].copy_from_slice(&[0x34, 0x00]); // 52 bytes len
+
         Self {
-            name: format!("Template{}", class),
+            name,
             class,
             level: 99,
             experience: 3511147413, // Level 99 exp
@@ -746,21 +845,25 @@ impl Savegame {
             current_stamina: base.stamina,
             max_stamina: base.stamina,
             skills: [0; 30],
-            raw_bytes: Vec::new(),
-            char_file: None, // No valid file
+            raw_bytes: raw,
+            char_file: None, // No valid parsed file yet, but raw_bytes are primed
             quests: [[0; 41]; 3],
+            hardcore: false,
+            died: false,
+            waypoints: [[false; 39]; 3],
         }
     }
 
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        let char_file = self.char_file.as_ref().ok_or_else(|| {
-            anyhow!("Cannot save a template that has no base file yet (TODO: Synthesize full file)")
-        })?;
-
-        let stats_offset = char_file.stats().marker_offset.unwrap_or(765);
-        let skills_offset = char_file
-            .skills()
-            .map(|s| s.marker_offset)
+        let stats_offset = self
+            .char_file
+            .as_ref()
+            .and_then(|f| f.stats().marker_offset)
+            .unwrap_or(765);
+        let skills_offset = self
+            .char_file
+            .as_ref()
+            .and_then(|f| f.skills().map(|s| s.marker_offset))
             .unwrap_or(stats_offset + 2); // Fallback
 
         // Encode Stats
@@ -817,6 +920,26 @@ impl Savegame {
                         new_raw[offset + i * 2 + 1] = (word >> 8) as u8;
                     }
                     offset += 96;
+                }
+            }
+        }
+
+        // Apply Waypoints overrides
+        if let Some(ws_idx) = new_raw.windows(2).position(|window| window == b"WS") {
+            let mut offset = ws_idx + 8;
+            for diff in 0..3 {
+                if offset + 24 <= new_raw.len() {
+                    let data_offset = offset + 2;
+                    for i in 0..39 {
+                        let byte_idx = i / 8;
+                        let bit_idx = i % 8;
+                        if self.waypoints[diff][i] {
+                            new_raw[data_offset + byte_idx] |= 1 << bit_idx;
+                        } else {
+                            new_raw[data_offset + byte_idx] &= !(1 << bit_idx);
+                        }
+                    }
+                    offset += 24;
                 }
             }
         }
