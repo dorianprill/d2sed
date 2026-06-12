@@ -24,8 +24,8 @@ https://www.d2tomb.com/ has detailed quest information if you are not sure on an
 
 ## GUI Description
 
-When starting the editor, there is a single screen with a text input box for the file path and a button beside it that launches a file picker to select a `.d2s` file.
-Below that, are state-buttons to choose from a new level 99 template character (goes green when selected) for each class, then below that a final button with the text "Load Character" that becomes enabled once a valid file path is entered or a template character is selected. The user can also press `Enter` to load the character after entering the file path or selecting a template character.
+When starting the editor, there is a single screen with a text input box for the file path and a button beside it that launches a file picker to select a `.d2s` file. Loading a d2s file will infer the game Version and patch from the file and adapt the editor accordingly (or ask if there are multiple possibilities).
+Below that, are state-buttons to choose from a new level 99 (all quests and bonuses, all waypoints) template character (goes green when selected) for each class, then below that a final button with the text "Load Character" that becomes enabled once a valid file path is entered or a template character is selected. The user can also press `Enter` to load the character after entering the file path or selecting a template character.
 
 
 Once a file is loaded, the main editor screen is displayed, showing the character's information and allowing the user to edit various aspects of the character.

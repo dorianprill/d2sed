@@ -11,3 +11,4 @@ thiserror = "2.0.18"
 serde = { version = "1.0.228", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = "0.3.23"
+rfd = "0.17.2"
