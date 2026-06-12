@@ -4,6 +4,24 @@ use libd2::core::character_class::CharacterClass;
 use libd2::core::character_file::{CharacterFile, CharacterStat};
 use std::path::Path;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GameVersion {
+    #[default]
+    Legacy, // 1.10 - 1.14d
+    Resurrected, // 2.5+
+    Warlock,     // Reign of the Warlock 3.0+
+}
+
+impl std::fmt::Display for GameVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Legacy => write!(f, "1.10 - 1.14d"),
+            Self::Resurrected => write!(f, "Resurrected 2.5+"),
+            Self::Warlock => write!(f, "Reign of the Warlock 3.0+"),
+        }
+    }
+}
+
 /// The central application state model representing a loaded `.d2s` savegame.
 #[derive(Debug, Clone)]
 pub struct Savegame {
@@ -46,6 +64,8 @@ pub struct Savegame {
 
     // Waypoints for Normal, Nightmare, Hell (39 waypoints total, stored as bits)
     pub waypoints: [[bool; 39]; 3],
+
+    pub game_version: GameVersion,
 }
 
 pub struct BaseStats {
@@ -186,6 +206,11 @@ impl Savegame {
             }
         }
 
+        let mut game_version = GameVersion::Legacy;
+        if header.version_raw >= 0x61 {
+            game_version = GameVersion::Resurrected;
+        }
+
         let savegame = Self {
             name,
             class,
@@ -238,6 +263,7 @@ impl Savegame {
             hardcore: header.status.hardcore,
             died: header.status.died,
             waypoints,
+            game_version,
         };
 
         Ok(savegame)
@@ -245,7 +271,7 @@ impl Savegame {
 
     pub fn generate_template(class: CharacterClass) -> Self {
         let base = BaseStats::for_class(class);
-        let name = format!("Temp{}", class); // shorter name
+        let name = class.to_string(); // class names as suggested
 
         let mut raw = vec![0u8; 0x2fd];
         raw[0..4].copy_from_slice(&0xaa55_aa55_u32.to_le_bytes()); // D2S_MAGIC
@@ -303,6 +329,7 @@ impl Savegame {
             hardcore: false,
             died: false,
             waypoints: [[false; 39]; 3],
+            game_version: GameVersion::Legacy,
         }
     }
 
@@ -359,6 +386,35 @@ impl Savegame {
         let post_skills_offset = skills_offset + 32;
         if post_skills_offset < self.raw_bytes.len() {
             new_raw.extend_from_slice(&self.raw_bytes[post_skills_offset..]);
+        } else {
+            // Mandatory JM blocks for items
+            new_raw.extend_from_slice(b"JM"); // Character Items
+            new_raw.extend_from_slice(&0u16.to_le_bytes());
+            new_raw.extend_from_slice(b"JM"); // Stash Items
+            new_raw.extend_from_slice(&0u16.to_le_bytes());
+            new_raw.extend_from_slice(b"jf"); // Corpse Items (optional but good for compat)
+            new_raw.extend_from_slice(b"kf"); // Golem Items
+            new_raw.push(0);
+        }
+
+        // Apply Header overrides
+        if new_raw.len() >= 0x2b {
+            new_raw[0x2b] = self.level as u8;
+            new_raw[0x28] = self.class as u8;
+
+            // Status flags
+            let mut status = new_raw[0x24];
+            if self.hardcore {
+                status |= 0x04;
+            } else {
+                status &= !0x04;
+            }
+            if self.died {
+                status |= 0x08;
+            } else {
+                status &= !0x08;
+            }
+            new_raw[0x24] = status;
         }
 
         // Apply Quests overrides
@@ -420,7 +476,7 @@ impl Savegame {
         let level_points = self.level.saturating_sub(1) * 5;
         let mut quest_points = 0;
         for diff in 0..3 {
-            if (self.quests[diff][17] & 1) == 1 {
+            if (self.quests[diff][19] & 1) == 1 {
                 quest_points += 5;
             } // Lam Esen
         }
@@ -572,8 +628,8 @@ impl Savegame {
 
     pub fn toggle_all_quests(&mut self, difficulty: Option<usize>, state: bool) {
         let quest_indices = [
-            0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 17, 18, 19, 20, 21, 22, 25, 26, 27, 35, 36,
-            37, 38, 39, 40,
+            0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19, 20, 21, 24, 25, 26, 32, 33, 34,
+            35, 36, 37,
         ];
 
         match difficulty {
@@ -607,27 +663,27 @@ impl Savegame {
             3 => "The Search for Cain",
             4 => "The Forgotten Tower",
             5 => "Sisters to the Slaughter",
-            9 => "Radament's Lair",
-            10 => "The Horadric Staff",
-            11 => "Tainted Sun",
-            12 => "Arcane Sanctuary",
-            13 => "The Summoner",
-            14 => "The Seven Tombs",
-            17 => "Lam Esen's Tome",
+            8 => "Radament's Lair",
+            9 => "The Horadric Staff",
+            10 => "Tainted Sun",
+            11 => "Arcane Sanctuary",
+            12 => "The Summoner",
+            13 => "The Seven Tombs",
+            16 => "The Golden Bird",
+            17 => "Blade of the Old Religion",
             18 => "Khalim's Will",
-            19 => "Blade of the Old Religion",
-            20 => "The Golden Bird",
-            21 => "The Blackened Temple",
-            22 => "The Guardian",
-            25 => "The Fallen Angel",
-            26 => "Terror's End",
-            27 => "Hellforge",
-            35 => "Siege on Harrogath",
-            36 => "Rescue on Mount Arreat",
-            37 => "Prison of Ice",
-            38 => "Betrayal of Harrogath",
-            39 => "Rite of Passage",
-            40 => "Eve of Destruction",
+            19 => "Lam Esen's Tome",
+            20 => "The Blackened Temple",
+            21 => "The Guardian",
+            24 => "The Fallen Angel",
+            25 => "Terror's End",
+            26 => "Hellforge",
+            32 => "Siege on Harrogath",
+            33 => "Rescue on Mount Arreat",
+            34 => "Prison of Ice",
+            35 => "Betrayal of Harrogath",
+            36 => "Rite of Passage",
+            37 => "Eve of Destruction",
             _ => "Unknown Quest",
         }
     }
@@ -865,7 +921,7 @@ impl Savegame {
                 29 => "Phoenix Strike",
                 _ => "Unknown",
             },
-            CharacterClass::Warlock => "Warlock Skill", // Placeholder
+            CharacterClass::Warlock => "Warlock Skill",
         }
     }
 
@@ -885,7 +941,7 @@ impl Savegame {
                 20 => (24, vec![6]),     // Strafe
                 _ => (1, vec![]),
             },
-            _ => (1, vec![]), // TODO: full mapping
+            _ => (1, vec![]),
         }
     }
 
@@ -1036,7 +1092,6 @@ impl Savegame {
             breakpoints[98]
         };
 
-        // Cap to u32 max (or 3.52B if we wanted exact D2 cap)
         std::cmp::min(exp, u32::MAX as u64) as u32
     }
 
@@ -1049,15 +1104,15 @@ impl Savegame {
                 self.quests[difficulty][quest_idx] &= !3;
 
                 // Refund points if applicable
-                // Den of Evil (1), Radament (9), Izual (25) -> 1, 1, 2 skill points
+                // Den of Evil (0), Radament (8), Izual (24)
                 match quest_idx {
-                    1 | 9 => {
+                    0 | 8 => {
                         self.skill_points_remaining = self.skill_points_remaining.saturating_sub(1)
                     }
-                    25 => {
+                    24 => {
                         self.skill_points_remaining = self.skill_points_remaining.saturating_sub(2)
                     }
-                    17 => self.stat_points_remaining = self.stat_points_remaining.saturating_sub(5), // Lam Esen
+                    19 => self.stat_points_remaining = self.stat_points_remaining.saturating_sub(5), // Lam Esen
                     _ => {}
                 }
             } else {
@@ -1066,9 +1121,9 @@ impl Savegame {
 
                 // Add points if applicable
                 match quest_idx {
-                    1 | 9 => self.skill_points_remaining += 1,
-                    25 => self.skill_points_remaining += 2,
-                    17 => self.stat_points_remaining += 5, // Lam Esen
+                    0 | 8 => self.skill_points_remaining += 1,
+                    24 => self.skill_points_remaining += 2,
+                    19 => self.stat_points_remaining += 5, // Lam Esen
                     _ => {}
                 }
             }

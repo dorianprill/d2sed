@@ -1,5 +1,8 @@
+use crate::config::Config;
+use crate::model::{GameVersion, Savegame};
 use iced::widget::{
-    Space, button, checkbox, column, container, row, scrollable, text, text_input, tooltip,
+    Space, button, checkbox, column, container, pick_list, row, scrollable, text, text_input,
+    tooltip,
 };
 use iced::{Alignment, Element, Length, Task};
 use libd2::core::character_class::CharacterClass;
@@ -9,8 +12,6 @@ use std::path::PathBuf;
 mod config;
 mod model;
 mod save;
-use config::Config;
-use model::Savegame;
 
 pub fn main() -> iced::Result {
     iced::application(App::default, App::update, App::view)
@@ -46,6 +47,7 @@ struct App {
     state: AppState,
     file_path: String,
     selected_template: Option<CharacterClass>,
+    selected_version: GameVersion,
     config: Config,
 }
 
@@ -56,6 +58,7 @@ impl Default for App {
             state: AppState::LaunchScreen,
             file_path: String::new(),
             selected_template: None,
+            selected_version: GameVersion::Legacy,
             config,
         }
     }
@@ -67,6 +70,7 @@ enum Message {
     BrowseFile,
     FileSelected(Option<PathBuf>),
     TemplateSelected(CharacterClass),
+    VersionSelected(GameVersion),
     LoadCharacter,
     BackToLaunch,
     IncreaseStat(CharacterStat, u32),
@@ -87,6 +91,9 @@ enum Message {
     ToggleAllQuests(Option<usize>, bool),
     ChangeExportPath,
     ExportPathSelected(Option<PathBuf>),
+    ToggleDead,
+    GoldChanged(u32),
+    StashGoldChanged(u32),
 }
 
 impl App {
@@ -116,13 +123,19 @@ impl App {
                 self.file_path.clear();
                 Task::none()
             }
+            Message::VersionSelected(version) => {
+                self.selected_version = version;
+                Task::none()
+            }
             Message::LoadCharacter => {
                 let left_tab = EditorLeftTab::Stats;
                 let right_tab = EditorRightTab::Skills;
 
                 if let Some(class) = self.selected_template {
+                    let mut save = Savegame::generate_template(class);
+                    save.game_version = self.selected_version;
                     self.state = AppState::Editor {
-                        save: Savegame::generate_template(class),
+                        save,
                         left_tab,
                         right_tab,
                     };
@@ -263,6 +276,24 @@ impl App {
                 Task::none()
             }
             Message::ExportPathSelected(None) => Task::none(),
+            Message::ToggleDead => {
+                if let AppState::Editor { save, .. } = &mut self.state {
+                    save.died = !save.died;
+                }
+                Task::none()
+            }
+            Message::GoldChanged(val) => {
+                if let AppState::Editor { save, .. } = &mut self.state {
+                    save.gold = val;
+                }
+                Task::none()
+            }
+            Message::StashGoldChanged(val) => {
+                if let AppState::Editor { save, .. } = &mut self.state {
+                    save.stashed_gold = val;
+                }
+                Task::none()
+            }
             Message::SaveCharacter => {
                 if let AppState::Editor { save, .. } = &self.state {
                     let mut path = self.config.export_path.clone().unwrap_or_else(|| {
@@ -331,6 +362,18 @@ impl App {
             class_row = class_row.push(btn);
         }
 
+        let version_picker = pick_list(
+            &[
+                GameVersion::Legacy,
+                GameVersion::Resurrected,
+                GameVersion::Warlock,
+            ][..],
+            Some(self.selected_version),
+            Message::VersionSelected,
+        )
+        .padding(10)
+        .width(Length::Fixed(200.0));
+
         let can_load = !self.file_path.is_empty() || self.selected_template.is_some();
         let mut load_btn = button("Load Character").padding(15);
         if can_load {
@@ -348,6 +391,9 @@ impl App {
             Space::new().height(20),
             text("Or Create New Level 99 Template:"),
             class_row,
+            Space::new().height(20),
+            text("Game Version:"),
+            version_picker,
             Space::new().height(40),
             load_btn,
         ]
@@ -383,7 +429,11 @@ impl App {
                         .on_input(Message::NameChanged)
                         .size(30)
                         .width(Length::Fixed(200.0)),
-                    text(format!("Level {} {}", save.level, save.class)).size(18),
+                    text(format!(
+                        "Level {} {} ({})",
+                        save.level, save.class, save.game_version
+                    ))
+                    .size(14),
                 ],
                 Space::new().width(20),
                 column![
@@ -393,11 +443,13 @@ impl App {
                         "Softcore"
                     })
                     .size(18),
-                    text(if save.died { "DEAD" } else { "Alive" }).color(if save.died {
-                        iced::Color::from_rgb(1.0, 0.0, 0.0)
-                    } else {
-                        iced::Color::from_rgb(0.0, 1.0, 0.0)
-                    }),
+                    button(text(if save.died { "DEAD" } else { "Alive" }))
+                        .on_press(Message::ToggleDead)
+                        .style(if save.died {
+                            button::danger
+                        } else {
+                            button::success
+                        }),
                 ],
                 Space::new().width(Length::Fill),
                 column![
@@ -534,7 +586,15 @@ impl App {
             .spacing(10)
             .into(),
             EditorLeftTab::Stash => column![
-                text(format!("Gold: {}", save.stashed_gold)).size(18),
+                row![
+                    text("Gold:").size(18),
+                    text_input("0", &save.stashed_gold.to_string())
+                        .on_input(|s| Message::StashGoldChanged(s.parse().unwrap_or(0)))
+                        .padding(5)
+                        .width(Length::Fixed(150.0)),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
                 self.draw_grid(10, 10, 35.0, "Stash".to_string()),
             ]
             .spacing(10)
@@ -627,19 +687,19 @@ impl App {
             }
             EditorRightTab::Quests => {
                 let acts: [(&str, &[usize]); 5] = [
-                    ("Act I", &[0, 1, 2, 3, 4, 5]),
-                    ("Act II", &[9, 10, 11, 12, 13, 14]),
-                    ("Act III", &[17, 18, 19, 20, 21, 22]),
-                    ("Act IV", &[25, 26, 27]),
-                    ("Act V", &[35, 36, 37, 38, 39, 40]),
+                    ("Act I", &[0, 1, 3, 4, 2, 5]),
+                    ("Act II", &[8, 9, 10, 11, 12, 13]),
+                    ("Act III", &[16, 17, 18, 19, 20, 21]),
+                    ("Act IV", &[24, 26, 27, 25]),
+                    ("Act V", &[32, 33, 34, 35, 36, 37]),
                 ];
 
                 let difficulties = ["Normal", "Nightmare", "Hell"];
 
                 let all_completed = difficulties.iter().enumerate().all(|(d, _)| {
                     [
-                        0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 17, 18, 19, 20, 21, 22, 25, 26,
-                        27, 35, 36, 37, 38, 39, 40,
+                        0, 1, 3, 4, 2, 5, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19, 20, 21, 24, 26, 27,
+                        25, 32, 33, 34, 35, 36, 37,
                     ]
                     .iter()
                     .all(|&q| (save.quests[d][q] & 1) == 1)
@@ -659,8 +719,8 @@ impl App {
 
                 for (diff_idx, diff_name) in difficulties.iter().enumerate() {
                     let diff_all_done = [
-                        0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 17, 18, 19, 20, 21, 22, 25, 26,
-                        27, 35, 36, 37, 38, 39, 40,
+                        0, 1, 3, 4, 2, 5, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19, 20, 21, 24, 26, 27,
+                        25, 32, 33, 34, 35, 36, 37,
                     ]
                     .iter()
                     .all(|&q| (save.quests[diff_idx][q] & 1) == 1);
@@ -676,24 +736,24 @@ impl App {
                     ]
                     .spacing(15);
 
-                    for (act_name, quest_indices) in acts {
-                        let mut act_col = column![text(act_name).size(16)].spacing(5);
+                    for (act_idx, (act_name, quest_indices)) in acts.iter().enumerate() {
+                        let mut act_col = column![text(*act_name).size(16)].spacing(5);
                         let mut quest_grid = column![].spacing(2);
 
                         for chunk in quest_indices.chunks(3) {
                             let mut q_row = row![].spacing(5);
-                            for &q_idx in chunk {
+                            for (q_pos, &q_idx) in chunk.iter().enumerate() {
                                 let is_completed = (save.quests[diff_idx][q_idx] & 1) == 1;
                                 let q_name = Savegame::get_quest_name(q_idx);
 
-                                let btn = button(text(format!("Q{}", q_idx)))
+                                let btn = button(text(format!("A{}Q{}", act_idx + 1, q_pos + 1)))
                                     .on_press(Message::ToggleQuest(diff_idx, q_idx))
                                     .style(if is_completed {
                                         button::success
                                     } else {
                                         button::secondary
                                     })
-                                    .width(Length::Fixed(40.0));
+                                    .width(Length::Fixed(60.0));
 
                                 q_row = q_row.push(tooltip(btn, q_name, tooltip::Position::Top));
                             }
@@ -812,20 +872,82 @@ impl App {
                 .spacing(10)
                 .into()
             }
-            EditorRightTab::Inventory => column![
-                text(format!("Gold: {}", save.gold)).size(18),
-                self.draw_grid(10, 4, 40.0, "Inventory".to_string()),
-            ]
-            .spacing(10)
-            .into(),
+            EditorRightTab::Inventory => {
+                let slot = |w: f32, h: f32, label: String| {
+                    container(text(label).size(10))
+                        .width(Length::Fixed(w * 40.0))
+                        .height(Length::Fixed(h * 40.0))
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill)
+                        .style(|_| container::Style {
+                            background: Some(iced::Color::from_rgb(0.15, 0.15, 0.15).into()),
+                            border: iced::Border {
+                                color: iced::Color::from_rgb(0.3, 0.3, 0.3),
+                                width: 1.0,
+                                radius: iced::border::Radius::default(),
+                            },
+                            ..Default::default()
+                        })
+                };
+
+                let gear_layout = column![
+                    row![
+                        Space::new().width(Length::Fixed(80.0)),
+                        slot(2.0, 2.0, "HELMET".to_string()),
+                        Space::new().width(Length::Fixed(40.0)),
+                        slot(1.0, 1.0, "AMULET".to_string()),
+                    ]
+                    .spacing(10),
+                    row![
+                        slot(2.0, 4.0, "WEAPON L".to_string()),
+                        slot(2.0, 3.0, "ARMOR".to_string()),
+                        slot(2.0, 4.0, "WEAPON R".to_string()),
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center),
+                    row![
+                        slot(2.0, 1.0, "GLOVES".to_string()),
+                        slot(2.0, 1.0, "BELT".to_string()),
+                        slot(2.0, 1.0, "BOOTS".to_string()),
+                    ]
+                    .spacing(10),
+                    row![
+                        Space::new().width(Length::Fixed(80.0)),
+                        slot(1.0, 1.0, "RING L".to_string()),
+                        Space::new().width(Length::Fixed(40.0)),
+                        slot(1.0, 1.0, "RING R".to_string()),
+                    ]
+                    .spacing(10),
+                ]
+                .spacing(10)
+                .align_x(Alignment::Center);
+
+                column![
+                    row![
+                        text("Gold:").size(18),
+                        text_input("0", &save.gold.to_string())
+                            .on_input(|s| Message::GoldChanged(s.parse().unwrap_or(0)))
+                            .padding(5)
+                            .width(Length::Fixed(150.0)),
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center),
+                    Space::new().height(20),
+                    gear_layout,
+                    Space::new().height(20),
+                    self.draw_grid(10, 4, 40.0, "Inventory".to_string()),
+                ]
+                .spacing(10)
+                .into()
+            }
         };
 
         let main_content = row![
             column![left_tabs, Space::new().height(10), left_content]
-                .width(Length::FillPortion(1))
+                .width(Length::Fixed(400.0))
                 .padding(10),
             column![right_tabs, Space::new().height(10), right_content]
-                .width(Length::FillPortion(2))
+                .width(Length::Fill)
                 .padding(10),
         ]
         .spacing(20);

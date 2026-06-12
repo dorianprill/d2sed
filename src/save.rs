@@ -28,12 +28,23 @@ impl BitWriter {
 }
 
 pub fn calculate_checksum(bytes: &[u8]) -> u32 {
-    let mut checksum = 0i32;
-    for &b in bytes {
-        checksum = (checksum << 1).wrapping_add(if checksum < 0 { 1 } else { 0 });
-        checksum = checksum.wrapping_add(b as i32);
+    let mut checksum = 0u32;
+
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        let mut value = if (12..16).contains(&index) {
+            0
+        } else {
+            byte as u32
+        };
+
+        if checksum & 0x8000_0000 != 0 {
+            value = value.wrapping_add(1);
+        }
+
+        checksum = checksum.wrapping_mul(2).wrapping_add(value);
     }
-    checksum as u32
+
+    checksum
 }
 
 pub fn fix_header(raw: &mut [u8]) {
