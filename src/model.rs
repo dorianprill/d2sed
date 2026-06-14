@@ -69,9 +69,6 @@ pub struct Savegame {
     // Array of 30 skill levels
     pub skills: [u8; 30],
 
-    // Raw file bytes for sections we don't fully parse/modify yet
-    pub raw_bytes: Vec<u8>,
-
     // Parsed libd2 character file
     pub char_file: Option<CharacterFile>,
 
@@ -109,7 +106,11 @@ impl Savegame {
 
         let mut game_version = GameVersion::Legacy;
         if header.version_raw >= 0x61 {
-            game_version = GameVersion::Resurrected;
+            if class == CharacterClass::Warlock {
+                game_version = GameVersion::Warlock;
+            } else {
+                game_version = GameVersion::Resurrected;
+            }
         }
 
         let mut savegame = Self {
@@ -158,7 +159,6 @@ impl Savegame {
                 .unwrap_or_else(|| BaseStats::for_class(class).stamina << 8)
                 >> 8,
             skills,
-            raw_bytes,
             char_file: Some(char_file.clone()),
             quests,
             hardcore: header.status.hardcore,
@@ -231,6 +231,11 @@ impl Savegame {
 
         let quests = initial_template_quests();
 
+        let mut game_version = GameVersion::Legacy;
+        if class == CharacterClass::Warlock {
+            game_version = GameVersion::Warlock;
+        }
+
         Self {
             name,
             class,
@@ -251,13 +256,12 @@ impl Savegame {
             current_stamina: base.stamina,
             max_stamina: base.stamina,
             skills: [0; 30],
-            raw_bytes: raw,
             char_file: Some(char_file),
             quests,
             hardcore: false,
             died: false,
             waypoints: [[false; WAYPOINT_COUNT]; 3],
-            game_version: GameVersion::Legacy,
+            game_version,
         }
     }
 

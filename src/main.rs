@@ -534,18 +534,11 @@ impl App {
         let mut class_row = row![].spacing(10).align_y(Alignment::Center);
         for class in classes {
             let is_selected = self.selected_template == Some(class);
-            let label = if class == CharacterClass::Warlock {
-                "Warlock (Not implemented)".to_string()
-            } else {
-                class.to_string()
-            };
-            let mut btn = button(text(label)).padding(10);
+            let mut btn = button(text(class.to_string())).padding(10);
 
-            if class != CharacterClass::Warlock {
-                btn = btn.on_press(Message::TemplateSelected(class));
-            }
+            btn = btn.on_press(Message::TemplateSelected(class));
 
-            if is_selected && class != CharacterClass::Warlock {
+            if is_selected {
                 btn = btn.style(button::success);
             }
             class_row = class_row.push(btn);
@@ -584,12 +577,14 @@ impl App {
             text("Game Version:"),
             version_picker,
             Space::new().height(40),
+            column![
+                text(self.status_message.as_deref().unwrap_or(""))
+                    .size(11)
+                    .style(|_: &iced::Theme| text::Style {
+                        color: Some(iced::Color::from_rgb(0.95, 0.75, 0.25)),
+                    }),
+            ],
             load_btn,
-            text(self.status_message.as_deref().unwrap_or(""))
-                .size(12)
-                .style(|_| text::Style {
-                    color: Some(iced::Color::from_rgb(0.95, 0.75, 0.25)),
-                }),
         ]
         .spacing(10)
         .align_x(Alignment::Center);
@@ -621,78 +616,86 @@ impl App {
             death_button = death_button.on_press(Message::ToggleDead);
         }
 
-        let header = container(
+        let header_content = row![
             row![
-                row![
-                    column![
-                        text_input("Name", &save.name)
-                            .on_input(Message::NameChanged)
-                            .size(29)
-                            .width(Length::Fixed(200.0)),
-                        text(format!(
-                            "Level {} {} ({})",
-                            save.level, save.class, save.game_version
-                        ))
-                        .size(13),
-                    ]
-                    .spacing(2),
-                    column![
-                        button("Upgrade")
-                            .on_press(Message::UpgradeVersion)
-                            .padding(5),
-                        text(self.status_message.as_deref().unwrap_or(""))
-                            .size(11)
-                            .style(|_| text::Style {
-                                color: Some(iced::Color::from_rgb(0.95, 0.75, 0.25)),
-                            }),
-                    ]
-                    .spacing(2),
-                ]
-                .spacing(10)
-                .align_y(Alignment::End),
-                Space::new().width(20),
                 column![
-                    text(if save.hardcore {
-                        "HARDCORE"
-                    } else {
-                        "Softcore"
-                    })
-                    .size(17),
-                    death_button,
-                ],
-                Space::new().width(Length::Fill),
-                column![
-                    text("Export Path:").size(11),
-                    row![
-                        text_input("Folder path...", &self.export_path_input)
-                            .on_input(Message::ExportPathChanged)
-                            .padding(5)
-                            .size(11)
-                            .width(Length::Fixed(260.0)),
-                        button("Browse")
-                            .on_press(Message::BrowseExportPath)
-                            .padding(5),
-                    ]
-                    .spacing(5)
-                    .align_y(Alignment::Center),
+                    text_input("Name", &save.name)
+                        .on_input(Message::NameChanged)
+                        .size(29)
+                        .width(Length::Fixed(200.0)),
+                    text(format!(
+                        "Level {} {} ({})",
+                        save.level, save.class, save.game_version
+                    ))
+                    .size(13),
                 ]
                 .spacing(2),
-                Space::new().width(20),
-                button("Save .d2s")
-                    .on_press(Message::SaveCharacter)
-                    .padding(10)
-                    .style(button::primary),
-                Space::new().width(20),
-                button("Back").on_press(Message::BackToLaunch).padding(10),
+                column![
+                    button("Upgrade")
+                        .on_press(Message::UpgradeVersion)
+                        .padding(5),
+                ]
+                .spacing(2),
             ]
-            .align_y(Alignment::End)
-            .padding(10),
-        )
-        .style(|_| container::Style {
-            background: Some(iced::Color::from_rgb(0.1, 0.1, 0.1).into()),
-            ..Default::default()
-        })
-        .width(Length::Fill);
+            .spacing(10)
+            .align_y(Alignment::End),
+            Space::new().width(20),
+            column![
+                text(if save.hardcore {
+                    "HARDCORE"
+                } else {
+                    "Softcore"
+                })
+                .size(17),
+                death_button,
+            ],
+            Space::new().width(Length::Fill),
+            column![
+                text("Export Path:").size(11),
+                row![
+                    text_input("Folder path...", &self.export_path_input)
+                        .on_input(Message::ExportPathChanged)
+                        .padding(5)
+                        .size(11)
+                        .width(Length::Fixed(260.0)),
+                    button("Browse")
+                        .on_press(Message::BrowseExportPath)
+                        .padding(5),
+                ]
+                .spacing(5)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(2),
+            Space::new().width(20),
+            button("Save .d2s")
+                .on_press(Message::SaveCharacter)
+                .padding(10)
+                .style(button::primary),
+            Space::new().width(20),
+            button("Back").on_press(Message::BackToLaunch).padding(10),
+        ]
+        .align_y(Alignment::End)
+        .padding(10);
+
+        let status_line: Element<'_, Message> = if let Some(msg) = &self.status_message {
+            row![
+                Space::new().width(Length::Fill),
+                text(msg).size(11).style(|_: &iced::Theme| text::Style {
+                    color: Some(iced::Color::from_rgb(0.95, 0.75, 0.25)),
+                }),
+                Space::new().width(10),
+            ]
+            .into()
+        } else {
+            Space::new().height(0).into()
+        };
+
+        let header = container(column![header_content, status_line])
+            .style(|_| container::Style {
+                background: Some(iced::Color::from_rgb(0.1, 0.1, 0.1).into()),
+                ..Default::default()
+            })
+            .width(Length::Fill);
 
         let left_tabs = row![
             button("Character")
