@@ -39,6 +39,256 @@ const VISIBLE_QUEST_INDICES: [usize; 27] = [
     39, 40,
 ];
 
+const EXPERIENCE_BY_LEVEL: [u32; 99] = [
+    0,
+    500,
+    1_500,
+    3_750,
+    7_875,
+    14_175,
+    22_680,
+    32_886,
+    44_396,
+    57_715,
+    72_144,
+    90_180,
+    112_725,
+    140_906,
+    176_132,
+    220_165,
+    275_207,
+    344_008,
+    430_010,
+    537_513,
+    671_891,
+    839_864,
+    1_049_830,
+    1_312_287,
+    1_640_359,
+    2_050_449,
+    2_563_061,
+    3_203_826,
+    3_902_260,
+    4_663_553,
+    5_493_363,
+    6_397_855,
+    7_383_752,
+    8_458_379,
+    9_629_723,
+    10_906_488,
+    12_298_162,
+    13_815_086,
+    15_468_534,
+    17_270_791,
+    19_235_252,
+    21_376_515,
+    23_710_491,
+    26_254_525,
+    29_027_522,
+    32_050_088,
+    35_344_686,
+    38_935_798,
+    42_850_109,
+    47_116_709,
+    51_767_302,
+    56_836_449,
+    62_361_819,
+    68_384_473,
+    74_949_165,
+    82_104_680,
+    89_904_191,
+    98_405_658,
+    107_672_256,
+    117_772_849,
+    128_782_495,
+    140_783_010,
+    153_863_570,
+    168_121_381,
+    183_662_396,
+    200_602_101,
+    219_066_380,
+    239_192_444,
+    261_129_853,
+    285_041_630,
+    311_105_466,
+    339_515_048,
+    370_481_492,
+    404_234_916,
+    441_026_148,
+    481_128_591,
+    524_840_254,
+    572_485_967,
+    624_419_793,
+    681_027_665,
+    742_730_244,
+    809_986_056,
+    883_294_891,
+    963_201_521,
+    1_050_299_747,
+    1_145_236_814,
+    1_248_718_217,
+    1_361_512_946,
+    1_484_459_201,
+    1_618_470_619,
+    1_764_543_065,
+    1_923_762_030,
+    2_097_310_703,
+    2_286_478_756,
+    2_492_671_933,
+    2_717_422_497,
+    2_962_400_612,
+    3_229_426_756,
+    3_520_485_254,
+];
+
+/// A display group for one class skill tab/tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SkillCategory {
+    pub name: &'static str,
+    pub slots: &'static [usize],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SkillRequirement {
+    level: u32,
+    prereqs: &'static [usize],
+}
+
+const AMAZON_JAVELIN_AND_SPEAR: [usize; 10] = [4, 8, 9, 13, 14, 18, 19, 24, 28, 29];
+const AMAZON_PASSIVE_AND_MAGIC: [usize; 10] = [2, 3, 7, 11, 12, 17, 22, 23, 26, 27];
+const AMAZON_BOW_AND_CROSSBOW: [usize; 10] = [0, 1, 5, 6, 10, 15, 16, 20, 21, 25];
+const AMAZON_SKILL_CATEGORIES: [SkillCategory; 3] = [
+    SkillCategory {
+        name: "Bow and Crossbow",
+        slots: &AMAZON_BOW_AND_CROSSBOW,
+    },
+    SkillCategory {
+        name: "Passive and Magic",
+        slots: &AMAZON_PASSIVE_AND_MAGIC,
+    },
+    SkillCategory {
+        name: "Javelin and Spear",
+        slots: &AMAZON_JAVELIN_AND_SPEAR,
+    },
+];
+
+const SORCERESS_FIRE: [usize; 10] = [0, 1, 5, 10, 11, 15, 16, 20, 25, 26];
+const SORCERESS_LIGHTNING: [usize; 10] = [2, 6, 7, 12, 13, 17, 18, 21, 22, 27];
+const SORCERESS_COLD: [usize; 10] = [3, 4, 8, 9, 14, 19, 23, 24, 28, 29];
+const SORCERESS_SKILL_CATEGORIES: [SkillCategory; 3] = [
+    SkillCategory {
+        name: "Fire Spells",
+        slots: &SORCERESS_FIRE,
+    },
+    SkillCategory {
+        name: "Lightning Spells",
+        slots: &SORCERESS_LIGHTNING,
+    },
+    SkillCategory {
+        name: "Cold Spells",
+        slots: &SORCERESS_COLD,
+    },
+];
+
+const NECROMANCER_SUMMONING: [usize; 10] = [3, 4, 9, 13, 14, 19, 23, 24, 28, 29];
+const NECROMANCER_POISON_AND_BONE: [usize; 10] = [1, 2, 7, 8, 12, 17, 18, 22, 26, 27];
+const NECROMANCER_CURSES: [usize; 10] = [0, 5, 6, 10, 11, 15, 16, 20, 21, 25];
+const NECROMANCER_SKILL_CATEGORIES: [SkillCategory; 3] = [
+    SkillCategory {
+        name: "Summoning Spells",
+        slots: &NECROMANCER_SUMMONING,
+    },
+    SkillCategory {
+        name: "Poison and Bone",
+        slots: &NECROMANCER_POISON_AND_BONE,
+    },
+    SkillCategory {
+        name: "Curses",
+        slots: &NECROMANCER_CURSES,
+    },
+];
+
+const PALADIN_COMBAT: [usize; 10] = [0, 1, 5, 10, 11, 15, 16, 20, 21, 25];
+const PALADIN_OFFENSIVE_AURAS: [usize; 10] = [2, 6, 7, 12, 17, 18, 22, 23, 26, 27];
+const PALADIN_DEFENSIVE_AURAS: [usize; 10] = [3, 4, 8, 9, 13, 14, 19, 24, 28, 29];
+const PALADIN_SKILL_CATEGORIES: [SkillCategory; 3] = [
+    SkillCategory {
+        name: "Defensive Auras",
+        slots: &PALADIN_DEFENSIVE_AURAS,
+    },
+    SkillCategory {
+        name: "Offensive Auras",
+        slots: &PALADIN_OFFENSIVE_AURAS,
+    },
+    SkillCategory {
+        name: "Combat Skills",
+        slots: &PALADIN_COMBAT,
+    },
+];
+
+const BARBARIAN_COMBAT: [usize; 10] = [0, 6, 7, 13, 14, 17, 18, 21, 25, 26];
+const BARBARIAN_MASTERIES: [usize; 10] = [1, 2, 3, 8, 9, 10, 15, 19, 22, 27];
+const BARBARIAN_WARCRIES: [usize; 10] = [4, 5, 11, 12, 16, 20, 23, 24, 28, 29];
+const BARBARIAN_SKILL_CATEGORIES: [SkillCategory; 3] = [
+    SkillCategory {
+        name: "Warcries",
+        slots: &BARBARIAN_WARCRIES,
+    },
+    SkillCategory {
+        name: "Combat Masteries",
+        slots: &BARBARIAN_MASTERIES,
+    },
+    SkillCategory {
+        name: "Combat Skills",
+        slots: &BARBARIAN_COMBAT,
+    },
+];
+
+const DRUID_ELEMENTAL: [usize; 10] = [4, 8, 9, 13, 14, 19, 23, 24, 28, 29];
+const DRUID_SHAPE_SHIFTING: [usize; 10] = [2, 3, 7, 11, 12, 17, 18, 21, 22, 27];
+const DRUID_SUMMONING: [usize; 10] = [0, 1, 5, 6, 10, 15, 16, 20, 25, 26];
+const DRUID_SKILL_CATEGORIES: [SkillCategory; 3] = [
+    SkillCategory {
+        name: "Elemental",
+        slots: &DRUID_ELEMENTAL,
+    },
+    SkillCategory {
+        name: "Shape Shifting",
+        slots: &DRUID_SHAPE_SHIFTING,
+    },
+    SkillCategory {
+        name: "Summoning",
+        slots: &DRUID_SUMMONING,
+    },
+];
+
+const ASSASSIN_MARTIAL_ARTS: [usize; 10] = [3, 4, 8, 9, 14, 18, 19, 23, 24, 29];
+const ASSASSIN_SHADOW_DISCIPLINES: [usize; 10] = [1, 2, 7, 12, 13, 16, 17, 22, 27, 28];
+const ASSASSIN_TRAPS: [usize; 10] = [0, 5, 6, 10, 11, 15, 20, 21, 25, 26];
+const ASSASSIN_SKILL_CATEGORIES: [SkillCategory; 3] = [
+    SkillCategory {
+        name: "Martial Arts",
+        slots: &ASSASSIN_MARTIAL_ARTS,
+    },
+    SkillCategory {
+        name: "Shadow Disciplines",
+        slots: &ASSASSIN_SHADOW_DISCIPLINES,
+    },
+    SkillCategory {
+        name: "Traps",
+        slots: &ASSASSIN_TRAPS,
+    },
+];
+
+const WARLOCK_SKILLS: [usize; 30] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    26, 27, 28, 29,
+];
+const WARLOCK_SKILL_CATEGORIES: [SkillCategory; 1] = [SkillCategory {
+    name: "Warlock Skills",
+    slots: &WARLOCK_SKILLS,
+}];
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Default, serde_derive::Serialize, serde_derive::Deserialize,
 )]
@@ -214,12 +464,12 @@ impl Savegame {
         let mut quests = [[0u16; 48]; 3];
         if let Some(woo_idx) = raw_bytes.windows(4).position(|window| window == b"Woo!") {
             let mut offset = woo_idx + 10;
-            for diff in 0..3 {
+            for difficulty in &mut quests {
                 if offset + 96 <= raw_bytes.len() {
-                    for i in 0..48 {
+                    for (i, word) in difficulty.iter_mut().enumerate() {
                         let b1 = raw_bytes[offset + i * 2] as u16;
                         let b2 = raw_bytes[offset + i * 2 + 1] as u16;
-                        quests[diff][i] = b1 | (b2 << 8);
+                        *word = b1 | (b2 << 8);
                     }
                     offset += 96;
                 }
@@ -229,14 +479,13 @@ impl Savegame {
         let mut waypoints = [[false; 39]; 3];
         if let Some(ws_idx) = raw_bytes.windows(2).position(|window| window == b"WS") {
             let mut offset = ws_idx + 8; // Skip WS, unknown, and length
-            for diff in 0..3 {
+            for difficulty in &mut waypoints {
                 if offset + 24 <= raw_bytes.len() {
                     let data_offset = offset + 2;
-                    for i in 0..39 {
+                    for (i, waypoint) in difficulty.iter_mut().enumerate() {
                         let byte_idx = i / 8;
                         let bit_idx = i % 8;
-                        waypoints[diff][i] =
-                            (raw_bytes[data_offset + byte_idx] & (1 << bit_idx)) != 0;
+                        *waypoint = (raw_bytes[data_offset + byte_idx] & (1 << bit_idx)) != 0;
                     }
                     offset += 24;
                 }
@@ -303,6 +552,7 @@ impl Savegame {
             game_version,
         };
         savegame.clamp_gold();
+        savegame.recalculate_remaining_points_from_allocations();
 
         Ok(savegame)
     }
@@ -347,10 +597,10 @@ impl Savegame {
 
         // Initialize quests with intro/travel markers
         let mut quests = [[0u16; 48]; 3];
-        for diff in 0..3 {
+        for difficulty in &mut quests {
             // Standard act-introduction markers for a template character.
             for &idx in &[0, ACT_II_INTRO, ACT_III_INTRO, ACT_IV_INTRO, ACT_V_INTRO] {
-                quests[diff][idx] = QUEST_REWARD_GRANTED;
+                difficulty[idx] = QUEST_REWARD_GRANTED;
             }
         }
 
@@ -358,7 +608,7 @@ impl Savegame {
             name,
             class,
             level: 99,
-            experience: 3511147413,
+            experience: 3_520_485_254,
             gold: 0,
             stashed_gold: 0,
             strength: base.str,
@@ -483,10 +733,9 @@ impl Savegame {
             // Ensure Woo! header magic is correct
             new_raw[woo_idx + 4..woo_idx + 10].copy_from_slice(&[6, 0, 0, 0, 0x2a, 0x01]);
             let mut offset = woo_idx + 10;
-            for diff in 0..3 {
+            for difficulty in &quests {
                 if offset + 96 <= new_raw.len() {
-                    for i in 0..48 {
-                        let word = quests[diff][i];
+                    for (i, &word) in difficulty.iter().enumerate() {
                         new_raw[offset + i * 2] = (word & 0xFF) as u8;
                         new_raw[offset + i * 2 + 1] = (word >> 8) as u8;
                     }
@@ -500,17 +749,17 @@ impl Savegame {
         if let Some(ws_idx) = new_raw.windows(2).position(|window| window == b"WS") {
             new_raw[ws_idx + 2..ws_idx + 8].copy_from_slice(&[6, 0, 0, 0, 0x50, 0x00]);
             let mut offset = ws_idx + 8;
-            for diff in 0..3 {
+            for difficulty in &self.waypoints {
                 if offset + 24 <= new_raw.len() {
                     new_raw[offset] = 0x02;
                     new_raw[offset + 1] = 0x01;
                     let data_offset = offset + 2;
                     // Clear existing bits first
                     new_raw[data_offset..data_offset + 5].fill(0);
-                    for i in 0..39 {
+                    for (i, waypoint) in difficulty.iter().enumerate() {
                         let byte_idx = i / 8;
                         let bit_idx = i % 8;
-                        if self.waypoints[diff][i] {
+                        if *waypoint {
                             new_raw[data_offset + byte_idx] |= 1 << bit_idx;
                         }
                     }
@@ -539,12 +788,67 @@ impl Savegame {
     pub fn total_allowed_stat_points(&self) -> u32 {
         let level_points = self.level.saturating_sub(1) * 5;
         let mut quest_points = 0;
-        for diff in 0..3 {
-            if (self.quests[diff][17] & 1) == 1 {
+        for difficulty in &self.quests {
+            if (difficulty[17] & 1) == 1 {
                 quest_points += 5;
             }
         }
         level_points + quest_points
+    }
+
+    pub fn total_allowed_skill_points(&self) -> u32 {
+        let mut quest_points = 0;
+        for difficulty in &self.quests {
+            if quest_is_completed(difficulty[1]) {
+                quest_points += 1;
+            }
+            if quest_is_completed(difficulty[9]) {
+                quest_points += 1;
+            }
+            if quest_is_completed(difficulty[25]) {
+                quest_points += 2;
+            }
+        }
+        self.level.saturating_sub(1) + quest_points
+    }
+
+    fn spent_stat_points(&self) -> u32 {
+        let base = BaseStats::for_class(self.class);
+        self.strength.saturating_sub(base.str)
+            + self.dexterity.saturating_sub(base.dex)
+            + self.vitality.saturating_sub(base.vit)
+            + self.energy.saturating_sub(base.eng)
+    }
+
+    fn spent_skill_points(&self) -> u32 {
+        self.skills.iter().map(|&level| level as u32).sum()
+    }
+
+    fn normalize_point_totals(&mut self) {
+        let allowed_stats = self.total_allowed_stat_points();
+        let spent_stats = self.spent_stat_points();
+        if spent_stats <= allowed_stats {
+            self.stat_points_remaining = allowed_stats - spent_stats;
+        } else {
+            self.reset_stats();
+        }
+
+        let allowed_skills = self.total_allowed_skill_points();
+        let spent_skills = self.spent_skill_points();
+        if spent_skills <= allowed_skills {
+            self.skill_points_remaining = allowed_skills - spent_skills;
+        } else {
+            self.reset_skills();
+        }
+    }
+
+    fn recalculate_remaining_points_from_allocations(&mut self) {
+        self.stat_points_remaining = self
+            .total_allowed_stat_points()
+            .saturating_sub(self.spent_stat_points());
+        self.skill_points_remaining = self
+            .total_allowed_skill_points()
+            .saturating_sub(self.spent_skill_points());
     }
 
     pub fn reset_stats(&mut self) {
@@ -568,23 +872,8 @@ impl Savegame {
         self.level = new_level.clamp(1, 99);
         self.clamp_gold();
         self.experience = Self::calculate_experience_for_level(self.level);
-        let diff = (self.level as i32) - (old_level as i32);
-        if diff > 0 {
-            self.stat_points_remaining += (diff as u32) * 5;
-            self.skill_points_remaining += diff as u32;
-        } else if diff < 0 {
-            let required_reduction_stats = (-diff as u32) * 5;
-            if self.stat_points_remaining >= required_reduction_stats {
-                self.stat_points_remaining -= required_reduction_stats;
-            } else {
-                self.reset_stats();
-            }
-            let required_reduction_skills = -diff as u32;
-            if self.skill_points_remaining >= required_reduction_skills {
-                self.skill_points_remaining -= required_reduction_skills;
-            } else {
-                self.reset_skills();
-            }
+        if self.level != old_level {
+            self.normalize_point_totals();
         }
     }
 
@@ -646,6 +935,39 @@ impl Savegame {
         }
     }
 
+    pub fn minimize_stat(&mut self, stat: CharacterStat) {
+        self.decrease_stat(stat, u32::MAX);
+    }
+
+    pub fn maximize_stat(&mut self, stat: CharacterStat) {
+        self.increase_stat(stat, self.stat_points_remaining);
+    }
+
+    pub fn consumed_resistance_scrolls(&self) -> [bool; 3] {
+        [
+            self.quests[0][PRISON_OF_ICE] & QUEST_PRISON_OF_ICE_SCROLL_CONSUMED != 0,
+            self.quests[1][PRISON_OF_ICE] & QUEST_PRISON_OF_ICE_SCROLL_CONSUMED != 0,
+            self.quests[2][PRISON_OF_ICE] & QUEST_PRISON_OF_ICE_SCROLL_CONSUMED != 0,
+        ]
+    }
+
+    pub fn base_resistance_bonus(&self) -> u32 {
+        self.consumed_resistance_scrolls()
+            .iter()
+            .filter(|&&consumed| consumed)
+            .count() as u32
+            * 10
+    }
+
+    /// Returns whether the editor should present this save as currently dead.
+    ///
+    /// The softcore header died bit can be set on living characters. True
+    /// softcore corpse state is stored in the later corpse item section, which
+    /// d2sed does not parse yet.
+    pub fn is_dead_for_display(&self) -> bool {
+        self.hardcore && self.died
+    }
+
     pub fn set_gold(&mut self, gold: u32) {
         self.gold = gold.min(self.max_inventory_gold());
     }
@@ -679,12 +1001,10 @@ impl Savegame {
     }
 
     pub fn reset_skills(&mut self) {
-        let mut total_spent = 0;
         for level in &mut self.skills {
-            total_spent += *level as u32;
             *level = 0;
         }
-        self.skill_points_remaining += total_spent;
+        self.skill_points_remaining = self.total_allowed_skill_points();
     }
 
     pub fn toggle_all_waypoints(&mut self, difficulty: Option<usize>, state: bool) {
@@ -901,64 +1221,64 @@ impl Savegame {
                 1 => "Sword Mastery",
                 2 => "Axe Mastery",
                 3 => "Mace Mastery",
-                4 => "Polearm Mastery",
-                5 => "Throwing Mastery",
-                6 => "Spear Mastery",
-                7 => "Howl",
-                8 => "Find Potion",
-                9 => "Leap",
-                10 => "Double Swing",
+                4 => "Howl",
+                5 => "Find Potion",
+                6 => "Leap",
+                7 => "Double Swing",
+                8 => "Pole Arm Mastery",
+                9 => "Throwing Mastery",
+                10 => "Spear Mastery",
                 11 => "Taunt",
                 12 => "Shout",
                 13 => "Stun",
                 14 => "Double Throw",
-                15 => "Leap Attack",
-                16 => "Concentrate",
-                17 => "Iron Skin",
-                18 => "Battle Cry",
-                19 => "Frenzy",
-                20 => "Increased Stamina",
-                21 => "Battle Orders",
-                22 => "Grim Ward",
-                23 => "Whirlwind",
-                24 => "Berserk",
-                25 => "Natural Resistance",
-                26 => "War Cry",
-                27 => "Battle Command",
-                28 => "Find Item",
-                29 => "Command",
+                15 => "Increased Stamina",
+                16 => "Find Item",
+                17 => "Leap Attack",
+                18 => "Concentrate",
+                19 => "Iron Skin",
+                20 => "Battle Cry",
+                21 => "Frenzy",
+                22 => "Increased Speed",
+                23 => "Battle Orders",
+                24 => "Grim Ward",
+                25 => "Whirlwind",
+                26 => "Berserk",
+                27 => "Natural Resistance",
+                28 => "War Cry",
+                29 => "Battle Command",
                 _ => "Unknown",
             },
             CharacterClass::Druid => match slot {
                 0 => "Raven",
-                1 => "Plague Poppy",
-                2 => "Wearbear",
-                3 => "Firestorm",
-                4 => "Oak Sage",
-                5 => "Summon Spirit Wolf",
-                6 => "Wearwolf",
-                7 => "Shape Shifting",
+                1 => "Poison Creeper",
+                2 => "Werewolf",
+                3 => "Lycanthropy",
+                4 => "Firestorm",
+                5 => "Oak Sage",
+                6 => "Summon Spirit Wolf",
+                7 => "Werebear",
                 8 => "Molten Boulder",
                 9 => "Arctic Blast",
-                10 => "Fissure",
+                10 => "Carrion Vine",
                 11 => "Feral Rage",
                 12 => "Maul",
-                13 => "Carrion Vine",
-                14 => "Heart of Wolverine",
-                15 => "Summon Dire Wolf",
-                16 => "Rabies",
-                17 => "Fire Claws",
-                18 => "Twister",
-                19 => "Volcano",
-                20 => "Tornado",
-                21 => "Spirit of Barbs",
-                22 => "Summon Grizzly",
-                23 => "Fury",
-                24 => "Armageddon",
-                25 => "Hurricane",
-                26 => "Hunger",
-                27 => "Shock Wave",
-                28 => "Summon Dire Bear",
+                13 => "Fissure",
+                14 => "Cyclone Armor",
+                15 => "Heart of Wolverine",
+                16 => "Summon Dire Wolf",
+                17 => "Rabies",
+                18 => "Fire Claws",
+                19 => "Twister",
+                20 => "Solar Creeper",
+                21 => "Hunger",
+                22 => "Shock Wave",
+                23 => "Volcano",
+                24 => "Tornado",
+                25 => "Spirit of Barbs",
+                26 => "Summon Grizzly",
+                27 => "Fury",
+                28 => "Armageddon",
                 29 => "Hurricane",
                 _ => "Unknown",
             },
@@ -999,165 +1319,1013 @@ impl Savegame {
         }
     }
 
-    pub fn skill_requirements(class: CharacterClass, slot: usize) -> (u32, Vec<usize>) {
+    pub fn skill_categories(class: CharacterClass) -> &'static [SkillCategory] {
         match class {
-            CharacterClass::Amazon => match slot {
-                0 => (1, vec![]),
-                1 => (1, vec![]),
-                5 => (6, vec![0]),
-                6 => (12, vec![0]),
-                10 => (12, vec![1]),
-                16 => (18, vec![0, 6]),
-                21 => (24, vec![1, 10]),
-                25 => (30, vec![5, 16]),
-                20 => (24, vec![6]),
-                _ => (1, vec![]),
-            },
-            _ => (1, vec![]),
+            CharacterClass::Amazon => &AMAZON_SKILL_CATEGORIES,
+            CharacterClass::Sorceress => &SORCERESS_SKILL_CATEGORIES,
+            CharacterClass::Necromancer => &NECROMANCER_SKILL_CATEGORIES,
+            CharacterClass::Paladin => &PALADIN_SKILL_CATEGORIES,
+            CharacterClass::Barbarian => &BARBARIAN_SKILL_CATEGORIES,
+            CharacterClass::Druid => &DRUID_SKILL_CATEGORIES,
+            CharacterClass::Assassin => &ASSASSIN_SKILL_CATEGORIES,
+            CharacterClass::Warlock => &WARLOCK_SKILL_CATEGORIES,
         }
     }
 
-    pub fn can_increase_skill(&self, slot: usize) -> bool {
-        if slot >= 30 || self.skill_points_remaining == 0 || self.skills[slot] >= 20 {
-            return false;
+    fn skill_requirement(class: CharacterClass, slot: usize) -> SkillRequirement {
+        match class {
+            CharacterClass::Amazon => match slot {
+                0 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                1 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                2 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                3 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                4 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                5 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                6 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[0],
+                },
+                7 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                8 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[4],
+                },
+                9 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                10 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[1, 6],
+                },
+                11 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[2],
+                },
+                12 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[7],
+                },
+                13 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[4],
+                },
+                14 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[9],
+                },
+                15 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[5],
+                },
+                16 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[5, 6],
+                },
+                17 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[3],
+                },
+                18 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[8, 14],
+                },
+                19 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[14],
+                },
+                20 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[16],
+                },
+                21 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[10],
+                },
+                22 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[11],
+                },
+                23 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[12],
+                },
+                24 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[13],
+                },
+                25 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[15],
+                },
+                26 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[22, 23],
+                },
+                27 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[17],
+                },
+                28 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[18],
+                },
+                29 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[19],
+                },
+                _ => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+            },
+            CharacterClass::Sorceress => match slot {
+                0 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                1 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                2 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                3 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                4 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                5 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                6 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                7 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                8 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                9 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[3],
+                },
+                10 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[5],
+                },
+                11 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[0],
+                },
+                12 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[6],
+                },
+                13 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[2],
+                },
+                14 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[9, 4],
+                },
+                15 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[10],
+                },
+                16 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[1, 11],
+                },
+                17 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[13],
+                },
+                18 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[7],
+                },
+                19 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[9],
+                },
+                20 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[11, 15],
+                },
+                21 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[12, 17],
+                },
+                22 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[18, 17],
+                },
+                23 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[8, 19],
+                },
+                24 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[14],
+                },
+                25 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[],
+                },
+                26 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[16],
+                },
+                27 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[],
+                },
+                28 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[23],
+                },
+                29 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[],
+                },
+                _ => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+            },
+            CharacterClass::Necromancer => match slot {
+                0 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                1 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                2 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                3 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[4],
+                },
+                4 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                5 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                6 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[0],
+                },
+                7 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                8 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[1],
+                },
+                9 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                10 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[0],
+                },
+                11 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[6],
+                },
+                12 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[2],
+                },
+                13 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[9],
+                },
+                14 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[4],
+                },
+                15 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[5],
+                },
+                16 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[10],
+                },
+                17 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[7, 8],
+                },
+                18 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[8],
+                },
+                19 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[9],
+                },
+                20 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[15],
+                },
+                21 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[11],
+                },
+                22 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[12, 18],
+                },
+                23 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[13],
+                },
+                24 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[19],
+                },
+                25 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[16, 21],
+                },
+                26 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[17],
+                },
+                27 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[18],
+                },
+                28 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[24],
+                },
+                29 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[14, 24],
+                },
+                _ => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+            },
+            CharacterClass::Paladin => match slot {
+                0 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                1 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                2 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                3 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                4 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                5 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                6 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[2],
+                },
+                7 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                8 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                9 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                10 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[0],
+                },
+                11 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[1],
+                },
+                12 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[2],
+                },
+                13 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[3],
+                },
+                14 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[],
+                },
+                15 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[10],
+                },
+                16 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[5],
+                },
+                17 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[12],
+                },
+                18 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[6],
+                },
+                19 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[13, 8],
+                },
+                20 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[15],
+                },
+                21 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[11, 16],
+                },
+                22 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[18],
+                },
+                23 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[7, 18],
+                },
+                24 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[13],
+                },
+                25 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[16, 20],
+                },
+                26 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[17],
+                },
+                27 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[23],
+                },
+                28 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[19],
+                },
+                29 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[],
+                },
+                _ => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+            },
+            CharacterClass::Barbarian => match slot {
+                0 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                1 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                2 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                3 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                4 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                5 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                6 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                7 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[0],
+                },
+                8 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                9 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                10 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                11 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[4],
+                },
+                12 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[4],
+                },
+                13 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[0],
+                },
+                14 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[7],
+                },
+                15 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[],
+                },
+                16 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[5],
+                },
+                17 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[6],
+                },
+                18 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[13],
+                },
+                19 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[],
+                },
+                20 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[11],
+                },
+                21 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[14],
+                },
+                22 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[15],
+                },
+                23 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[12],
+                },
+                24 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[16],
+                },
+                25 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[17, 18],
+                },
+                26 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[18],
+                },
+                27 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[19],
+                },
+                28 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[20, 23],
+                },
+                29 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[23],
+                },
+                _ => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+            },
+            CharacterClass::Druid => match slot {
+                0 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                1 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                2 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                3 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[2],
+                },
+                4 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                5 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                6 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[0],
+                },
+                7 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                8 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[4],
+                },
+                9 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                10 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[1],
+                },
+                11 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[2],
+                },
+                12 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[7],
+                },
+                13 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[8],
+                },
+                14 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[9],
+                },
+                15 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[5],
+                },
+                16 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[5, 6],
+                },
+                17 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[11],
+                },
+                18 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[11, 12],
+                },
+                19 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[14],
+                },
+                20 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[10],
+                },
+                21 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[18],
+                },
+                22 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[12],
+                },
+                23 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[13],
+                },
+                24 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[19],
+                },
+                25 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[15],
+                },
+                26 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[16],
+                },
+                27 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[17],
+                },
+                28 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[23, 29],
+                },
+                29 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[24],
+                },
+                _ => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+            },
+            CharacterClass::Assassin => match slot {
+                0 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                1 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                2 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                3 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                4 => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+                5 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[0],
+                },
+                6 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                7 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[1],
+                },
+                8 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[],
+                },
+                9 => SkillRequirement {
+                    level: 6,
+                    prereqs: &[4],
+                },
+                10 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[5],
+                },
+                11 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[0],
+                },
+                12 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[1],
+                },
+                13 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[2],
+                },
+                14 => SkillRequirement {
+                    level: 12,
+                    prereqs: &[3],
+                },
+                15 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[6, 11],
+                },
+                16 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[7],
+                },
+                17 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[13, 12],
+                },
+                18 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[8],
+                },
+                19 => SkillRequirement {
+                    level: 18,
+                    prereqs: &[9],
+                },
+                20 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[10],
+                },
+                21 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[11],
+                },
+                22 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[13],
+                },
+                23 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[18],
+                },
+                24 => SkillRequirement {
+                    level: 24,
+                    prereqs: &[19],
+                },
+                25 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[20],
+                },
+                26 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[15],
+                },
+                27 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[16],
+                },
+                28 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[17],
+                },
+                29 => SkillRequirement {
+                    level: 30,
+                    prereqs: &[14, 23],
+                },
+                _ => SkillRequirement {
+                    level: 1,
+                    prereqs: &[],
+                },
+            },
+            CharacterClass::Warlock => SkillRequirement {
+                level: 1,
+                prereqs: &[],
+            },
         }
-        let (level_req, prereqs) = Self::skill_requirements(self.class, slot);
-        if self.level < level_req {
-            return false;
+    }
+
+    fn missing_skill_prereqs(&self, slot: usize) -> Vec<usize> {
+        let mut missing = Vec::new();
+        self.collect_missing_skill_prereqs(slot, &mut missing);
+        missing
+    }
+
+    fn collect_missing_skill_prereqs(&self, slot: usize, missing: &mut Vec<usize>) {
+        if slot >= 30 {
+            return;
         }
-        for &prereq in &prereqs {
-            if self.skills[prereq] == 0 {
-                return false;
+
+        for &prereq in Self::skill_requirement(self.class, slot).prereqs {
+            self.collect_missing_skill_prereqs(prereq, missing);
+            if self.skills[prereq] == 0 && !missing.contains(&prereq) {
+                missing.push(prereq);
             }
         }
-        true
+    }
+
+    fn has_required_level_for_skill_tree(&self, slot: usize, visited: &mut [bool; 30]) -> bool {
+        if slot >= 30 || visited[slot] {
+            return true;
+        }
+
+        visited[slot] = true;
+        let requirement = Self::skill_requirement(self.class, slot);
+        self.level >= requirement.level
+            && requirement
+                .prereqs
+                .iter()
+                .all(|&prereq| self.has_required_level_for_skill_tree(prereq, visited))
+    }
+
+    fn skill_points_needed_to_increase(&self, slot: usize) -> u32 {
+        1 + self.missing_skill_prereqs(slot).len() as u32
+    }
+
+    pub fn can_increase_skill(&self, slot: usize) -> bool {
+        if slot >= 30 || self.skills[slot] >= 20 {
+            return false;
+        }
+        if !self.has_required_level_for_skill_tree(slot, &mut [false; 30]) {
+            return false;
+        }
+        self.skill_points_remaining >= self.skill_points_needed_to_increase(slot)
     }
 
     pub fn increase_skill(&mut self, slot: usize) {
         if self.can_increase_skill(slot) {
+            let missing = self.missing_skill_prereqs(slot);
+            let spent = 1 + missing.len() as u32;
+            for prereq in missing {
+                self.skills[prereq] = 1;
+            }
             self.skills[slot] += 1;
-            self.skill_points_remaining -= 1;
+            self.skill_points_remaining -= spent;
         }
     }
+
+    fn skill_depends_on(
+        class: CharacterClass,
+        slot: usize,
+        dependency: usize,
+        visited: &mut [bool; 30],
+    ) -> bool {
+        if slot >= 30 || visited[slot] {
+            return false;
+        }
+
+        visited[slot] = true;
+        for &prereq in Self::skill_requirement(class, slot).prereqs {
+            if prereq == dependency || Self::skill_depends_on(class, prereq, dependency, visited) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn has_allocated_dependent_skill(&self, slot: usize) -> bool {
+        (0..30).any(|other| {
+            other != slot
+                && self.skills[other] > 0
+                && Self::skill_depends_on(self.class, other, slot, &mut [false; 30])
+        })
+    }
+
+    pub fn can_decrease_skill(&self, slot: usize) -> bool {
+        if slot >= 30 || self.skills[slot] == 0 {
+            return false;
+        }
+        self.skills[slot] > 1 || !self.has_allocated_dependent_skill(slot)
+    }
+
     pub fn decrease_skill(&mut self, slot: usize) {
-        if slot < 30 && self.skills[slot] > 0 {
+        if self.can_decrease_skill(slot) {
             self.skills[slot] -= 1;
             self.skill_points_remaining += 1;
         }
     }
 
     pub fn calculate_experience_for_level(level: u32) -> u32 {
-        if level <= 1 {
-            return 0;
-        }
-        let breakpoints: [u64; 100] = [
-            0,
-            500,
-            1500,
-            3750,
-            7875,
-            14175,
-            22680,
-            32886,
-            44396,
-            57715,
-            73364,
-            91554,
-            112700,
-            137351,
-            166092,
-            199557,
-            238555,
-            284004,
-            336962,
-            398674,
-            470588,
-            554388,
-            652033,
-            765664,
-            897970,
-            1052136,
-            1231799,
-            1441165,
-            1685089,
-            1964371,
-            2289725,
-            2668748,
-            3110398,
-            3624976,
-            4224419,
-            4923485,
-            5737243,
-            6685419,
-            7789397,
-            9075727,
-            10574548,
-            12320953,
-            14355554,
-            16725841,
-            19487313,
-            22704959,
-            26453535,
-            30821035,
-            35909890,
-            41838614,
-            48746200,
-            56795493,
-            66173873,
-            77100412,
-            89831416,
-            104664324,
-            121946896,
-            142084534,
-            165545585,
-            192882833,
-            224731871,
-            261838927,
-            305085806,
-            355476140,
-            414187212,
-            482588147,
-            562283086,
-            655132517,
-            763319086,
-            889373977,
-            1036239109,
-            1207361831,
-            1406734185,
-            1638994793,
-            1909565574,
-            2224749372,
-            2591963065,
-            3019846356,
-            3518335966,
-            4104037562,
-            4786445581,
-            5581452296,
-            6507641031,
-            7586685233,
-            8843818365,
-            10308520268,
-            12015011701,
-            13955310214,
-            16183424168,
-            18764024343,
-            21752945281,
-            25215033785,
-            29225726244,
-            33871403061,
-            39252327734,
-            45486518175,
-            52709249767,
-            61076449175,
-            70769493134,
-            82001460593,
-        ];
-        let exp = if level <= 99 {
-            breakpoints[level as usize - 1]
-        } else {
-            breakpoints[98]
-        };
-        std::cmp::min(exp, u32::MAX as u64) as u32
+        let index = level.clamp(1, 99) as usize - 1;
+        EXPERIENCE_BY_LEVEL[index]
     }
 
     pub fn toggle_quest(&mut self, difficulty: usize, quest_idx: usize) {
@@ -1278,6 +2446,224 @@ fn progression_from_quests(quests: &[[u16; 48]; 3]) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn experience_table_matches_lord_of_destruction_levels() {
+        assert_eq!(Savegame::calculate_experience_for_level(1), 0);
+        assert_eq!(Savegame::calculate_experience_for_level(80), 681_027_665);
+        assert_eq!(Savegame::calculate_experience_for_level(81), 742_730_244);
+        assert_eq!(Savegame::calculate_experience_for_level(90), 1_618_470_619);
+        assert_eq!(Savegame::calculate_experience_for_level(95), 2_492_671_933);
+        assert_eq!(Savegame::calculate_experience_for_level(96), 2_717_422_497);
+        assert_eq!(Savegame::calculate_experience_for_level(97), 2_962_400_612);
+        assert_eq!(Savegame::calculate_experience_for_level(98), 3_229_426_756);
+        assert_eq!(Savegame::calculate_experience_for_level(99), 3_520_485_254);
+        assert_eq!(Savegame::calculate_experience_for_level(100), 3_520_485_254);
+    }
+
+    #[test]
+    fn level_99_template_uses_exact_experience_breakpoint() {
+        let save = Savegame::generate_template(CharacterClass::Amazon);
+
+        assert_eq!(save.level, 99);
+        assert_eq!(
+            save.experience,
+            Savegame::calculate_experience_for_level(99)
+        );
+    }
+
+    #[test]
+    fn skill_categories_use_class_tree_names_and_slots() {
+        let categories = Savegame::skill_categories(CharacterClass::Paladin);
+
+        assert_eq!(categories[0].name, "Defensive Auras");
+        assert_eq!(categories[1].name, "Offensive Auras");
+        assert_eq!(categories[2].name, "Combat Skills");
+        assert_eq!(categories[2].slots, &[0, 1, 5, 10, 11, 15, 16, 20, 21, 25]);
+    }
+
+    #[test]
+    fn paladin_holy_shield_adds_recursive_prerequisites() {
+        let mut save = Savegame::generate_template(CharacterClass::Paladin);
+
+        save.increase_skill(21);
+
+        for slot in [1, 5, 11, 16, 21] {
+            assert_eq!(
+                save.skills[slot],
+                1,
+                "{} should receive one hard point",
+                Savegame::get_skill_name(save.class, slot)
+            );
+        }
+        assert_eq!(save.skill_points_remaining, 93);
+    }
+
+    #[test]
+    fn advanced_skill_requires_enough_points_for_prerequisites() {
+        let mut save = Savegame::generate_template(CharacterClass::Paladin);
+        save.skill_points_remaining = 4;
+
+        assert!(!save.can_increase_skill(21));
+        save.increase_skill(21);
+
+        assert_eq!(save.skills.iter().copied().sum::<u8>(), 0);
+        assert_eq!(save.skill_points_remaining, 4);
+    }
+
+    #[test]
+    fn last_prerequisite_point_cannot_be_removed_while_dependent_is_allocated() {
+        let mut save = Savegame::generate_template(CharacterClass::Paladin);
+        save.increase_skill(21);
+
+        assert!(!save.can_decrease_skill(1));
+        save.decrease_skill(1);
+
+        assert_eq!(save.skills[1], 1);
+        assert_eq!(save.skill_points_remaining, 93);
+    }
+
+    #[test]
+    fn extra_prerequisite_points_can_be_removed_back_to_one() {
+        let mut save = Savegame::generate_template(CharacterClass::Paladin);
+        save.increase_skill(21);
+        save.increase_skill(1);
+
+        assert!(save.can_decrease_skill(1));
+        save.decrease_skill(1);
+
+        assert_eq!(save.skills[1], 1);
+        assert_eq!(save.skill_points_remaining, 93);
+    }
+
+    #[test]
+    fn level_min_and_max_recompute_remaining_points() {
+        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+        save.increase_stat(CharacterStat::Strength, 10);
+        save.increase_skill(0);
+
+        save.set_level(1);
+
+        let base = BaseStats::for_class(CharacterClass::Amazon);
+        assert_eq!(save.level, 1);
+        assert_eq!(save.experience, 0);
+        assert_eq!(save.strength, base.str);
+        assert_eq!(save.stat_points_remaining, 0);
+        assert_eq!(save.skills.iter().copied().sum::<u8>(), 0);
+        assert_eq!(save.skill_points_remaining, 0);
+
+        save.set_level(99);
+
+        assert_eq!(save.level, 99);
+        assert_eq!(
+            save.experience,
+            Savegame::calculate_experience_for_level(99)
+        );
+        assert_eq!(save.stat_points_remaining, 490);
+        assert_eq!(save.skill_points_remaining, 98);
+    }
+
+    #[test]
+    fn stat_min_and_max_move_points_between_stat_and_pool() {
+        let mut save = Savegame::generate_template(CharacterClass::Sorceress);
+        let base = BaseStats::for_class(CharacterClass::Sorceress);
+        save.stat_points_remaining = 20;
+
+        save.maximize_stat(CharacterStat::Energy);
+
+        assert_eq!(save.energy, base.eng + 20);
+        assert_eq!(save.current_mana, base.mana + 40);
+        assert_eq!(save.max_mana, base.mana + 40);
+        assert_eq!(save.stat_points_remaining, 0);
+
+        save.minimize_stat(CharacterStat::Energy);
+
+        assert_eq!(save.energy, base.eng);
+        assert_eq!(save.current_mana, base.mana);
+        assert_eq!(save.max_mana, base.mana);
+        assert_eq!(save.stat_points_remaining, 20);
+    }
+
+    #[test]
+    fn point_normalization_preserves_loaded_allocations() {
+        let mut save = Savegame::generate_template(CharacterClass::Paladin);
+        save.strength += 25;
+        save.dexterity += 10;
+        save.skills[0] = 1;
+        save.skills[1] = 3;
+        save.stat_points_remaining = 999;
+        save.skill_points_remaining = 999;
+
+        save.normalize_point_totals();
+
+        assert_eq!(
+            save.stat_points_remaining,
+            save.total_allowed_stat_points() - 35
+        );
+        assert_eq!(
+            save.skill_points_remaining,
+            save.total_allowed_skill_points() - 4
+        );
+        assert_eq!(
+            save.strength,
+            BaseStats::for_class(CharacterClass::Paladin).str + 25
+        );
+        assert_eq!(save.skills[1], 3);
+    }
+
+    #[test]
+    fn loaded_over_budget_allocations_are_preserved_with_zero_remaining_points() {
+        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+        save.set_level(1);
+        save.strength += 25;
+        save.skills[0] = 1;
+
+        save.recalculate_remaining_points_from_allocations();
+
+        assert_eq!(
+            save.strength,
+            BaseStats::for_class(CharacterClass::Amazon).str + 25
+        );
+        assert_eq!(save.skills[0], 1);
+        assert_eq!(save.stat_points_remaining, 0);
+        assert_eq!(save.skill_points_remaining, 0);
+    }
+
+    #[test]
+    fn base_resistance_bonus_tracks_consumed_resistance_scrolls() {
+        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+
+        assert_eq!(save.consumed_resistance_scrolls(), [false, false, false]);
+        assert_eq!(save.base_resistance_bonus(), 0);
+
+        save.toggle_quest(0, PRISON_OF_ICE);
+
+        assert_eq!(save.consumed_resistance_scrolls(), [true, false, false]);
+        assert_eq!(save.base_resistance_bonus(), 10);
+
+        save.toggle_all_quests(None, true);
+
+        assert_eq!(save.consumed_resistance_scrolls(), [true, true, true]);
+        assert_eq!(save.base_resistance_bonus(), 30);
+    }
+
+    #[test]
+    fn softcore_died_status_bit_is_not_display_dead() {
+        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+        save.hardcore = false;
+        save.died = true;
+
+        assert!(!save.is_dead_for_display());
+    }
+
+    #[test]
+    fn hardcore_died_status_bit_is_display_dead() {
+        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+        save.hardcore = true;
+        save.died = true;
+
+        assert!(save.is_dead_for_display());
+    }
 
     #[test]
     fn completing_reward_quest_grants_reward_without_leaving_it_pending() {

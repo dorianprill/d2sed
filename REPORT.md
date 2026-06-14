@@ -3,6 +3,7 @@
 ## Project History
 
 - **2026-06-12**: Initialized the project with Rust Edition 2024, `iced` 0.14, and `libd2`. Setup the basic repository, Cargo configuration, and architecture guidelines. The architecture emphasizes the Elm-style Model-View-Update pattern and strictly separates the UI logic from the `libd2` domain logic. Added `rfd` for native cross-platform file dialogs.
+- **2026-06-13**: Replaced the generated experience curve with the canonical Lord of Destruction cumulative XP table through level 99. Added class skill tree metadata, grouped skills by their in-game categories, and made skill edits enforce prerequisite chains in the savegame model.
 
 ## Roadmap & Future Features
 
@@ -18,6 +19,8 @@
 - **Visuals**: Extract and use original Diablo 2 assets for UI elements (icons, buttons) using `libd2` MPQ readers.
 - **Mercenary Support**: View and edit mercenary equipment and attributes.
 - **Item Editing**: Modify item stats, add/remove sockets, change runewords.
+- **Corpse State**: Parse and preserve the softcore corpse item section so the editor can distinguish "has died before" from "currently has a corpse in game". Until item/corpse support exists, the death toggle is only editable for hardcore characters.
+- **Detailed Quest Progress Editing**: Model each quest as metadata over the raw 16-bit quest word: quest name, display flags, completion/reward flags, and special reward bits such as the Prison of Ice resistance scroll. A right-side inspector can then expose known flags with safe labels while preserving unknown bits until each quest is fully decoded.
 
 ### Unresolved / Technical Challenges
 - *None yet.*
