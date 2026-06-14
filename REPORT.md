@@ -4,6 +4,7 @@
 
 - **2026-06-12**: Initialized the project with Rust Edition 2024, `iced` 0.14, and `libd2`. Setup the basic repository, Cargo configuration, and architecture guidelines. The architecture emphasizes the Elm-style Model-View-Update pattern and strictly separates the UI logic from the `libd2` domain logic. Added `rfd` for native cross-platform file dialogs.
 - **2026-06-13**: Replaced the generated experience curve with the canonical Lord of Destruction cumulative XP table through level 99. Added class skill tree metadata, grouped skills by their in-game categories, and made skill edits enforce prerequisite chains in the savegame model.
+- **2026-06-14**: Moved reusable Diablo II rule data and pure rule logic into `libd2`: XP breakpoints, class base stats/resource growth, skill metadata/prerequisites, quest word semantics/rewards/progression, quest/waypoint section parse/write helpers, gold caps, and waypoint metadata. `d2sed` now consumes those APIs and keeps editor-specific state mutation, UI flow, template scaffolding, and safety prompts locally.
 
 ## Roadmap & Future Features
 

@@ -7,6 +7,9 @@ use iced::widget::{
 use iced::{Alignment, Element, Length, Size, Task};
 use libd2::core::character_class::CharacterClass;
 use libd2::core::character_file::CharacterStat;
+use libd2::core::quest::{self, VISIBLE_QUEST_ACTS, VISIBLE_QUEST_INDICES};
+use libd2::core::skills;
+use libd2::core::waypoint::{WAYPOINT_ACTS, WAYPOINT_COUNT, WAYPOINT_NAMES};
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -360,7 +363,7 @@ impl App {
             Message::ToggleWaypoint(diff, idx) => {
                 if let AppState::Editor { save, .. } = &mut self.state
                     && diff < 3
-                    && idx < 39
+                    && idx < WAYPOINT_COUNT
                 {
                     save.waypoints[diff][idx] = !save.waypoints[diff][idx];
                 }
@@ -904,10 +907,10 @@ impl App {
                 .spacing(5);
 
                 let mut skill_trees_row = row![].spacing(10).width(Length::Fixed(SKILL_PANE_WIDTH));
-                for category in Savegame::skill_categories(save.class) {
+                for category in skills::skill_categories(save.class) {
                     let mut tree_col = column![text(category.name).size(14)].spacing(5);
                     for &slot in category.slots {
-                        let name = Savegame::get_skill_name(save.class, slot);
+                        let name = skills::skill_name(save.class, slot);
                         let value = save.skills[slot];
 
                         let can_increase = save.can_increase_skill(slot);
@@ -954,20 +957,12 @@ impl App {
                 skills_col.into()
             }
             EditorRightTab::Quests => {
-                let acts: [(&str, &[usize]); 5] = [
-                    ("Act I", &[1, 2, 4, 5, 3, 6]),
-                    ("Act II", &[9, 10, 11, 12, 13, 14]),
-                    ("Act III", &[20, 19, 18, 17, 21, 22]),
-                    ("Act IV", &[25, 26, 27]),
-                    ("Act V", &[35, 36, 37, 38, 39, 40]),
-                ];
-
                 let difficulties = ["Normal", "Nightmare", "Hell"];
 
                 let all_completed = difficulties.iter().enumerate().all(|(d, _)| {
-                    Savegame::VISIBLE_QUEST_INDICES
+                    VISIBLE_QUEST_INDICES
                         .iter()
-                        .all(|&q| (save.quests[d][q] & 1) == 1)
+                        .all(|&q| quest::quest_is_completed(save.quests[d][q]))
                 });
 
                 let quest_header = row![
@@ -983,9 +978,9 @@ impl App {
                 let mut diff_row = row![].spacing(20);
 
                 for (diff_idx, diff_name) in difficulties.iter().enumerate() {
-                    let diff_all_done = Savegame::VISIBLE_QUEST_INDICES
+                    let diff_all_done = VISIBLE_QUEST_INDICES
                         .iter()
-                        .all(|&q| (save.quests[diff_idx][q] & 1) == 1);
+                        .all(|&q| quest::quest_is_completed(save.quests[diff_idx][q]));
 
                     let mut diff_col = column![
                         text(*diff_name).size(19),
@@ -998,24 +993,27 @@ impl App {
                     ]
                     .spacing(15);
 
-                    for (act_idx, (act_name, quest_indices)) in acts.iter().enumerate() {
-                        let mut act_col = column![text(*act_name).size(15)].spacing(5);
+                    for (act_idx, act) in VISIBLE_QUEST_ACTS.iter().enumerate() {
+                        let mut act_col = column![text(act.name).size(15)].spacing(5);
                         let mut quest_grid = column![].spacing(2);
 
-                        for chunk in quest_indices.chunks(3) {
+                        for (chunk_idx, chunk) in act.quest_indices.chunks(3).enumerate() {
                             let mut q_row = row![].spacing(5);
                             for (q_pos, &q_idx) in chunk.iter().enumerate() {
-                                let is_completed = (save.quests[diff_idx][q_idx] & 1) == 1;
-                                let q_name = Savegame::get_quest_name(q_idx);
+                                let is_completed =
+                                    quest::quest_is_completed(save.quests[diff_idx][q_idx]);
+                                let q_name = quest::quest_name(q_idx);
 
-                                let btn = button(text(format!("A{}Q{}", act_idx + 1, q_pos + 1)))
-                                    .on_press(Message::ToggleQuest(diff_idx, q_idx))
-                                    .style(if is_completed {
-                                        button::success
-                                    } else {
-                                        button::secondary
-                                    })
-                                    .width(Length::Fixed(60.0));
+                                let quest_position = chunk_idx * 3 + q_pos + 1;
+                                let btn =
+                                    button(text(format!("A{}Q{}", act_idx + 1, quest_position)))
+                                        .on_press(Message::ToggleQuest(diff_idx, q_idx))
+                                        .style(if is_completed {
+                                            button::success
+                                        } else {
+                                            button::secondary
+                                        })
+                                        .width(Length::Fixed(60.0));
 
                                 q_row = q_row.push(tooltip(btn, q_name, tooltip::Position::Top));
                             }
@@ -1031,58 +1029,10 @@ impl App {
                     .into()
             }
             EditorRightTab::Waypoints => {
-                let act_ranges = [
-                    ("Act I", 0..9),
-                    ("Act II", 9..18),
-                    ("Act III", 18..27),
-                    ("Act IV", 27..30),
-                    ("Act V", 30..39),
-                ];
-                let wp_names = [
-                    "Rogue Encampment",
-                    "Cold Plains",
-                    "Stony Field",
-                    "Dark Wood",
-                    "Black Marsh",
-                    "Outer Cloister",
-                    "Jail Level 1",
-                    "Inner Cloister",
-                    "Catacombs Level 2",
-                    "Lut Gholein",
-                    "Sewers Level 2",
-                    "Dry Hills",
-                    "Halls of the Dead L2",
-                    "Far Oasis",
-                    "Lost City",
-                    "Palace Cellar L1",
-                    "Arcane Sanctuary",
-                    "Canyon of the Magi",
-                    "Kurast Docks",
-                    "Spider Forest",
-                    "Great Marsh",
-                    "Flayer Jungle",
-                    "Lower Kurast",
-                    "Kurast Bazaar",
-                    "Upper Kurast",
-                    "Travincal",
-                    "Durance of Hate L2",
-                    "Pandemonium Fortress",
-                    "City of the Damned",
-                    "River of Flame",
-                    "Harrogath",
-                    "Frigid Highlands",
-                    "Arreat Plateau",
-                    "Crystalline Passage",
-                    "Halls of Pain",
-                    "Glacial Trail",
-                    "Frozen Tundra",
-                    "Ancients' Way",
-                    "Worldstone Keep L2",
-                ];
-
                 let difficulties = ["Normal", "Nightmare", "Hell"];
 
-                let all_wps_done = (0..3).all(|d| (0..39).all(|w| save.waypoints[d][w]));
+                let all_wps_done =
+                    (0..3).all(|d| (0..WAYPOINT_COUNT).all(|w| save.waypoints[d][w]));
 
                 let wp_header = row![
                     text("Waypoints").size(23),
@@ -1095,7 +1045,7 @@ impl App {
 
                 let mut diff_row = row![].spacing(20);
                 for (diff_idx, diff_name) in difficulties.iter().enumerate() {
-                    let diff_all_wps = (0..39).all(|w| save.waypoints[diff_idx][w]);
+                    let diff_all_wps = (0..WAYPOINT_COUNT).all(|w| save.waypoints[diff_idx][w]);
 
                     let mut diff_col = column![
                         text(*diff_name).size(19),
@@ -1105,12 +1055,12 @@ impl App {
                     ]
                     .spacing(10);
 
-                    for (act_name, range) in act_ranges.clone() {
-                        let mut act_col = column![text(act_name).size(15)].spacing(2);
-                        for wp_idx in range {
+                    for act in WAYPOINT_ACTS {
+                        let mut act_col = column![text(act.name).size(15)].spacing(2);
+                        for wp_idx in act.indices() {
                             let is_active = save.waypoints[diff_idx][wp_idx];
                             act_col = act_col.push(
-                                button(text(wp_names[wp_idx]).size(11))
+                                button(text(WAYPOINT_NAMES[wp_idx]).size(11))
                                     .on_press(Message::ToggleWaypoint(diff_idx, wp_idx))
                                     .style(if is_active {
                                         button::success
