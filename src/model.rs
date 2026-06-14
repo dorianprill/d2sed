@@ -1,7 +1,7 @@
-use crate::save::{BitWriter, fix_header};
+use crate::save::BitWriter;
 use anyhow::{Context, Result};
 use libd2::core::character_class::CharacterClass;
-use libd2::core::character_file::{CharacterFile, CharacterStat};
+use libd2::core::character_file::{CharacterFile, CharacterProgression, CharacterStat};
 use libd2::core::character_progression::{
     BaseStats, ClassGrowth, experience_for_level, max_inventory_gold, max_stash_gold,
     skill_points_from_level, stat_points_from_level,
@@ -9,10 +9,11 @@ use libd2::core::character_progression::{
 use libd2::core::quest::{
     self, SAVE_QUEST_SECTION_HEADER_AFTER_MARKER, SAVE_QUEST_SECTION_HEADER_BYTES,
     SAVE_QUEST_SECTION_MARKER, SAVE_QUEST_WORDS_PER_DIFFICULTY, VISIBLE_QUEST_INDICES,
-    apply_progression_from_quests, initial_template_quests, quest_is_completed,
-    set_quest_completed, sync_quest_progression,
+    initial_template_quests, progression_from_quests, quest_is_completed, set_quest_completed,
+    sync_quest_progression,
 };
 use libd2::core::skills;
+use libd2::core::version::CharacterStatus;
 use libd2::core::waypoint::{
     self, LEGACY_WAYPOINT_BYTES_PER_DIFFICULTY, LEGACY_WAYPOINT_SECTION_HEADER_AFTER_MARKER,
     LEGACY_WAYPOINT_SECTION_HEADER_BYTES, LEGACY_WAYPOINT_SECTION_MARKER, LEGACY_WAYPOINT_TRAILER,
@@ -101,10 +102,10 @@ impl Savegame {
         }
 
         let raw_bytes = char_file.to_bytes();
-        let quests = quest::parse_legacy_quest_words(&raw_bytes)
+        let quests = quest::parse_legacy_quest_words(&raw_bytes, 0)
             .unwrap_or([[0u16; SAVE_QUEST_WORDS_PER_DIFFICULTY]; 3]);
         let waypoints =
-            waypoint::parse_legacy_waypoints(&raw_bytes).unwrap_or([[false; WAYPOINT_COUNT]; 3]);
+            waypoint::parse_legacy_waypoints(&raw_bytes, 0).unwrap_or([[false; WAYPOINT_COUNT]; 3]);
 
         let mut game_version = GameVersion::Legacy;
         if header.version_raw >= 0x61 {
@@ -214,6 +215,20 @@ impl Savegame {
         raw[0x2ca..0x2ca + 2].copy_from_slice(b"w4");
         raw[0x2ca + 2..0x2ca + 4].copy_from_slice(&[0x34, 0x00]); // 52 bytes len
 
+        // Append required sections: gf, if, JM, JM, jf, kf, lf
+        raw.extend_from_slice(b"gf");
+        let mut writer = crate::save::BitWriter::new();
+        writer.write_bits(0x1ff, 9);
+        raw.extend_from_slice(&writer.finish());
+
+        raw.extend_from_slice(b"if");
+        raw.extend_from_slice(&[0; 30]);
+
+        raw.extend_from_slice(b"JM\0\0JM\0\0jfkf\0");
+
+        crate::save::fix_header(&mut raw);
+        let char_file = CharacterFile::parse(raw.clone()).expect("template should be valid");
+
         let quests = initial_template_quests();
 
         Self {
@@ -237,7 +252,7 @@ impl Savegame {
             max_stamina: base.stamina,
             skills: [0; 30],
             raw_bytes: raw,
-            char_file: None,
+            char_file: Some(char_file),
             quests,
             hardcore: false,
             died: false,
@@ -247,16 +262,7 @@ impl Savegame {
     }
 
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        let stats_offset = self
-            .char_file
-            .as_ref()
-            .and_then(|f| f.stats().marker_offset)
-            .unwrap_or(765);
-        let skills_offset = self
-            .char_file
-            .as_ref()
-            .and_then(|f| f.skills().map(|s| s.marker_offset))
-            .unwrap_or(stats_offset + 2);
+        let mut char_file = self.char_file.clone().unwrap();
 
         // Encode Stats
         let mut stats_writer = BitWriter::new();
@@ -291,62 +297,33 @@ impl Savegame {
         stats_writer.write_bits(0x1FF, 9);
         let encoded_stats = stats_writer.finish();
 
-        let mut new_raw = Vec::new();
-        new_raw.extend_from_slice(&self.raw_bytes[0..stats_offset]);
-        new_raw.extend_from_slice(b"gf");
-        new_raw.extend_from_slice(&encoded_stats);
-
-        new_raw.extend_from_slice(b"if");
-        new_raw.extend_from_slice(&self.skills);
-
-        let post_skills_offset = skills_offset + 32;
-        if post_skills_offset < self.raw_bytes.len() {
-            new_raw.extend_from_slice(&self.raw_bytes[post_skills_offset..]);
-        } else {
-            new_raw.extend_from_slice(b"JM");
-            new_raw.extend_from_slice(&0u16.to_le_bytes());
-            new_raw.extend_from_slice(b"JM");
-            new_raw.extend_from_slice(&0u16.to_le_bytes());
-            new_raw.extend_from_slice(b"jf");
-            new_raw.extend_from_slice(b"kf");
-            new_raw.push(0);
-        }
-
-        if new_raw.len() >= 0x2b {
-            new_raw[0x2b] = self.level as u8;
-            new_raw[0x28] = self.class as u8;
-            let mut status = new_raw[0x24];
-            if self.hardcore {
-                status |= 0x04;
-            } else {
-                status &= !0x04;
-            }
-            if self.died {
-                status |= 0x08;
-            } else {
-                status &= !0x08;
-            }
-            status |= 0x20; // Always set Expansion bit for modern saves
-            new_raw[0x24] = status;
-
-            let name_bytes = self.name.as_bytes();
-            let len = name_bytes.len().min(15);
-            new_raw[0x14..0x14 + 16].fill(0);
-            new_raw[0x14..0x14 + len].copy_from_slice(&name_bytes[..len]);
-        }
-
         let mut quests = self.quests;
         for difficulty in &mut quests {
             sync_quest_progression(difficulty);
         }
 
-        quest::write_legacy_quest_words(&mut new_raw, &quests);
-        apply_progression_from_quests(&mut new_raw, &quests);
+        let status = CharacterStatus {
+            hardcore: self.hardcore,
+            died: self.died,
+            expansion: char_file.header().status.expansion,
+            ladder: char_file.header().status.ladder,
+        };
 
-        waypoint::write_legacy_waypoints(&mut new_raw, &self.waypoints);
+        char_file.set_header_fields(
+            &self.name,
+            status,
+            self.class,
+            self.level as u8,
+            Some(CharacterProgression::from_v105_byte(
+                progression_from_quests(&quests),
+            )),
+        )?;
 
-        fix_header(&mut new_raw);
-        Ok(new_raw)
+        char_file.replace_stats_and_skills(&encoded_stats, &self.skills)?;
+        char_file.replace_quests(&quests)?;
+        char_file.replace_waypoints(&self.waypoints)?;
+
+        Ok(char_file.to_bytes())
     }
 
     pub fn save_to_file(&self, path: impl AsRef<Path>) -> Result<()> {
@@ -1012,7 +989,7 @@ mod tests {
     }
 
     fn quest_words(bytes: &[u8]) -> [[u16; SAVE_QUEST_WORDS_PER_DIFFICULTY]; 3] {
-        quest::parse_legacy_quest_words(bytes).expect("quest header should exist")
+        quest::parse_legacy_quest_words(bytes, 0).expect("quest header should exist")
     }
 
     fn stat_value(bytes: &[u8], target: CharacterStat) -> Option<u32> {
@@ -1049,5 +1026,15 @@ mod tests {
             }
         }
         Some(value)
+    }
+
+    #[test]
+    fn generate_warlock_fixture() {
+        let mut save = Savegame::generate_template(CharacterClass::Warlock);
+        save.game_version = GameVersion::Warlock;
+        save.set_level(1);
+        std::fs::create_dir_all("../save").unwrap_or(());
+        save.save_to_file("../save/Warlock.d2s")
+            .expect("Failed to save Warlock.d2s fixture");
     }
 }
