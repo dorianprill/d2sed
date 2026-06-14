@@ -9,12 +9,13 @@ Built as a testbed for [libd2](https://github.com/dorianprill/libd2) savegame de
 
 ## Features
 
-Tested with Diablo II Lord of Destruction 1.14d:
+Tested with Diablo II Lord of Destruction 1.14d and Resurrected 3.2:
 
-- [x] Load, edit, and save legacy `.d2s` files
-- [x] Generate level 99 class templates
+- [x] Load, edit, and save legacy `.d2s` and D2R saves
+- [x] Full support for **Reign of the Warlock** (class-id 7, skill base 373)
+- [x] Generate level 99 class templates for all classes
 - [x] Edit level, experience, core stats, stat points, skills, and skill points
-- [x] Reset stats and skills
+- [x] Reset stats and skills with prerequisite validation
 - [x] Complete quests across Normal, Nightmare, and Hell, including difficulty unlocks, Izual skill rewards, Anya resistance scrolls, and quest history state
 - [x] Unlock waypoints across all difficulties
 - [x] Edit inventory and stash gold within in-game caps
@@ -22,6 +23,25 @@ Tested with Diablo II Lord of Destruction 1.14d:
 Not supported yet:
 
 - [ ] Item, equipment, inventory, and stash contents editing
-- [ ] Diablo II: Resurrected saves
-- [ ] Reign of the Warlock saves
-- [ ] Full save validation beyond the currently edited fields
+- [ ] Shared stash `.d2i` support
+
+## Build Instructions
+
+To build `d2sed` from source, you need a Rust toolchain (2024 edition).
+
+**Important:** Currently, `d2sed` depends on a local version of `libd2`. You must have the `libd2` repository cloned at the same root level as `d2sed`:
+
+```
+/your-root
+  ├── libd2/
+  └── d2sed/
+```
+
+Then, run:
+
+```powershell
+cd d2sed
+cargo build --release
+```
+
+The resulting binary will be in `target/release/d2sed.exe`.

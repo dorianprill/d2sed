@@ -323,6 +323,20 @@ impl Savegame {
             )),
         )?;
 
+        // Ensure the raw version byte is updated if upgraded
+        let new_version_raw: u32 = match self.game_version {
+            GameVersion::Legacy => 0x60,
+            GameVersion::Resurrected | GameVersion::Warlock => 0x62, // 2.5+ / 3.0+
+        };
+        // D2R uses 0x62 for V105. Legacy is usually 0x60.
+        // We only overwrite it if we are not in Legacy mode.
+        if self.game_version != GameVersion::Legacy {
+            let mut raw = char_file.into_raw_bytes();
+            raw[0x04..0x08].copy_from_slice(&new_version_raw.to_le_bytes());
+            crate::save::fix_header(&mut raw);
+            char_file = CharacterFile::parse(raw)?;
+        }
+
         char_file.replace_stats_and_skills(&encoded_stats, &self.skills)?;
         char_file.replace_quests(&quests)?;
         char_file.replace_waypoints(&self.waypoints)?;
@@ -380,7 +394,7 @@ impl Savegame {
         }
     }
 
-    fn recalculate_remaining_points_from_allocations(&mut self) {
+    pub fn recalculate_remaining_points_from_allocations(&mut self) {
         self.stat_points_remaining = self
             .total_allowed_stat_points()
             .saturating_sub(self.spent_stat_points());
@@ -503,15 +517,6 @@ impl Savegame {
 
     pub fn base_resistance_bonus(&self) -> u32 {
         quest::base_resistance_bonus(&self.quests)
-    }
-
-    /// Returns whether the editor should present this save as currently dead.
-    ///
-    /// The softcore header died bit can be set on living characters. True
-    /// softcore corpse state is stored in the later corpse item section, which
-    /// d2sed does not parse yet.
-    pub fn is_dead_for_display(&self) -> bool {
-        self.hardcore && self.died
     }
 
     pub fn set_gold(&mut self, gold: u32) {
@@ -829,24 +834,6 @@ mod tests {
             [true, true, true]
         );
         assert_eq!(save.base_resistance_bonus(), 30);
-    }
-
-    #[test]
-    fn softcore_died_status_bit_is_not_display_dead() {
-        let mut save = Savegame::generate_template(CharacterClass::Amazon);
-        save.hardcore = false;
-        save.died = true;
-
-        assert!(!save.is_dead_for_display());
-    }
-
-    #[test]
-    fn hardcore_died_status_bit_is_display_dead() {
-        let mut save = Savegame::generate_template(CharacterClass::Amazon);
-        save.hardcore = true;
-        save.died = true;
-
-        assert!(save.is_dead_for_display());
     }
 
     #[test]

@@ -18,7 +18,7 @@ mod model;
 mod save;
 
 const INITIAL_WINDOW_WIDTH: f32 = 1080.0;
-const INITIAL_WINDOW_HEIGHT: f32 = 760.0;
+const INITIAL_WINDOW_HEIGHT: f32 = 780.0;
 const SKILL_PANE_WIDTH: f32 = 620.0;
 
 pub fn main() -> iced::Result {
@@ -134,11 +134,13 @@ impl Default for App {
                     .into_owned()
             });
 
+        let selected_version = config.selected_version.unwrap_or(GameVersion::Legacy);
+
         Self {
             state: AppState::LaunchScreen,
             file_path: String::new(),
             selected_template: None,
-            selected_version: GameVersion::Legacy,
+            selected_version,
             config,
             export_path_input,
             status_message: None,
@@ -214,10 +216,15 @@ impl App {
                 self.selected_template = Some(class);
                 self.file_path.clear();
                 self.status_message = None;
+                if class == CharacterClass::Warlock {
+                    self.selected_version = GameVersion::Warlock;
+                }
                 Task::none()
             }
             Message::VersionSelected(version) => {
                 self.selected_version = version;
+                self.config.selected_version = Some(version);
+                let _ = confy::store("d2sed", None, &self.config);
                 Task::none()
             }
             Message::LoadCharacter => {
@@ -226,7 +233,12 @@ impl App {
 
                 if let Some(class) = self.selected_template {
                     let mut save = Savegame::generate_template(class);
-                    save.game_version = self.selected_version;
+                    // For warlock template, always use warlock version regardless of picker
+                    if class == CharacterClass::Warlock {
+                        save.game_version = GameVersion::Warlock;
+                    } else {
+                        save.game_version = self.selected_version;
+                    }
                     self.state = AppState::Editor {
                         save: Box::new(save),
                         left_tab,
@@ -418,9 +430,7 @@ impl App {
                 Task::none()
             }
             Message::ToggleDead => {
-                if let AppState::Editor { save, .. } = &mut self.state
-                    && save.hardcore
-                {
+                if let AppState::Editor { save, .. } = &mut self.state {
                     save.died = !save.died;
                 }
                 Task::none()
@@ -475,8 +485,37 @@ impl App {
                             self.state = AppState::LaunchScreen;
                         }
                         ConfirmationAction::UpgradeVersion => {
-                            self.status_message =
-                                Some("Version upgrade is not implemented yet.".to_string());
+                            if let AppState::Editor { save, .. } = &mut self.state {
+                                match save.game_version {
+                                    GameVersion::Legacy => {
+                                        save.game_version = if save.class == CharacterClass::Warlock
+                                        {
+                                            GameVersion::Warlock
+                                        } else {
+                                            GameVersion::Resurrected
+                                        };
+                                        self.status_message =
+                                            Some(format!("Upgraded to {}", save.game_version));
+                                    }
+                                    GameVersion::Resurrected => {
+                                        if save.class == CharacterClass::Warlock {
+                                            save.game_version = GameVersion::Warlock;
+                                            self.status_message = Some(
+                                                "Upgraded to Reign of the Warlock 3.0+".to_string(),
+                                            );
+                                        } else {
+                                            self.status_message = Some(
+                                                "Already at maximum version for this class."
+                                                    .to_string(),
+                                            );
+                                        }
+                                    }
+                                    GameVersion::Warlock => {
+                                        self.status_message =
+                                            Some("Already at maximum version.".to_string());
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -604,78 +643,51 @@ impl App {
         left_tab: &EditorLeftTab,
         right_tab: &EditorRightTab,
     ) -> Element<'_, Message> {
-        let display_dead = save.is_dead_for_display();
-        let mut death_button =
-            button(text(if display_dead { "DEAD" } else { "Alive" })).style(if display_dead {
-                button::danger
-            } else {
-                button::success
-            });
-
-        if save.hardcore {
-            death_button = death_button.on_press(Message::ToggleDead);
-        }
-
         let header_content = row![
-            row![
-                column![
+            column![
+                row![
                     text_input("Name", &save.name)
                         .on_input(Message::NameChanged)
-                        .size(29)
+                        .size(24)
                         .width(Length::Fixed(200.0)),
-                    text(format!(
-                        "Level {} {} ({})",
-                        save.level, save.class, save.game_version
-                    ))
-                    .size(13),
-                ]
-                .spacing(2),
-                column![
                     button("Upgrade")
                         .on_press(Message::UpgradeVersion)
-                        .padding(5),
+                        .padding(8),
                 ]
-                .spacing(2),
+                .spacing(10)
+                .align_y(Alignment::Center),
+                text(format!(
+                    "Level {} {} ({}, {})",
+                    save.level,
+                    save.class,
+                    if save.hardcore { "Hardcore" } else { "Softcore" },
+                    save.game_version
+                ))
+                .size(13),
+            ]
+            .spacing(5),
+            Space::new().width(Length::Fill),
+            row![
+                text("Export:").size(11),
+                text_input("Folder path...", &self.export_path_input)
+                    .on_input(Message::ExportPathChanged)
+                    .padding(8)
+                    .size(11)
+                    .width(Length::Fixed(240.0)),
+                button("Browse")
+                    .on_press(Message::BrowseExportPath)
+                    .padding(8),
+                button("Save .d2s")
+                    .on_press(Message::SaveCharacter)
+                    .padding(8)
+                    .style(button::primary),
+                button("Back").on_press(Message::BackToLaunch).padding(8),
             ]
             .spacing(10)
-            .align_y(Alignment::End),
-            Space::new().width(20),
-            column![
-                text(if save.hardcore {
-                    "HARDCORE"
-                } else {
-                    "Softcore"
-                })
-                .size(17),
-                death_button,
-            ],
-            Space::new().width(Length::Fill),
-            column![
-                text("Export Path:").size(11),
-                row![
-                    text_input("Folder path...", &self.export_path_input)
-                        .on_input(Message::ExportPathChanged)
-                        .padding(5)
-                        .size(11)
-                        .width(Length::Fixed(260.0)),
-                    button("Browse")
-                        .on_press(Message::BrowseExportPath)
-                        .padding(5),
-                ]
-                .spacing(5)
-                .align_y(Alignment::Center),
-            ]
-            .spacing(2),
-            Space::new().width(20),
-            button("Save .d2s")
-                .on_press(Message::SaveCharacter)
-                .padding(10)
-                .style(button::primary),
-            Space::new().width(20),
-            button("Back").on_press(Message::BackToLaunch).padding(10),
+            .align_y(Alignment::Center),
         ]
-        .align_y(Alignment::End)
-        .padding(10);
+        .align_y(Alignment::Center)
+        .padding([2, 10]); // Further reduced padding
 
         let status_line: Element<'_, Message> = if let Some(msg) = &self.status_message {
             row![
@@ -687,7 +699,7 @@ impl App {
             ]
             .into()
         } else {
-            Space::new().height(0).into()
+            Space::new().height(2).into() // Minimal height
         };
 
         let header = container(column![header_content, status_line])
@@ -755,7 +767,12 @@ impl App {
 
                 let resistance_bonus = save.base_resistance_bonus();
 
-                column![
+                let mut char_col = column![
+                    checkbox(save.died)
+                        .label("Has died before?")
+                        .on_toggle(|_| Message::ToggleDead)
+                        .size(17),
+                    Space::new().height(5),
                     row![
                         text("Level:").width(Length::Fixed(100.0)),
                         button("Min").on_press(Message::MinimizeLevel).padding(5),
@@ -775,25 +792,33 @@ impl App {
                     .spacing(5)
                     .align_y(Alignment::Center),
                     text(format!("Experience: {}", save.experience)),
-                    Space::new().height(8),
-                    text("Attributes").size(23),
-                    stat_row(
-                        "Strength:".to_string(),
-                        save.strength,
-                        CharacterStat::Strength
-                    ),
-                    stat_row(
-                        "Dexterity:".to_string(),
-                        save.dexterity,
-                        CharacterStat::Dexterity
-                    ),
-                    stat_row(
-                        "Vitality:".to_string(),
-                        save.vitality,
-                        CharacterStat::Vitality
-                    ),
-                    stat_row("Energy:".to_string(), save.energy, CharacterStat::Energy),
-                    Space::new().height(6),
+                ]
+                .spacing(8);
+
+                char_col = char_col.push(Space::new().height(8));
+                char_col = char_col.push(text("Attributes").size(23));
+                char_col = char_col.push(stat_row(
+                    "Strength:".to_string(),
+                    save.strength,
+                    CharacterStat::Strength,
+                ));
+                char_col = char_col.push(stat_row(
+                    "Dexterity:".to_string(),
+                    save.dexterity,
+                    CharacterStat::Dexterity,
+                ));
+                char_col = char_col.push(stat_row(
+                    "Vitality:".to_string(),
+                    save.vitality,
+                    CharacterStat::Vitality,
+                ));
+                char_col = char_col.push(stat_row(
+                    "Energy:".to_string(),
+                    save.energy,
+                    CharacterStat::Energy,
+                ));
+                char_col = char_col.push(Space::new().height(6));
+                char_col = char_col.push(
                     row![
                         text(format!(
                             "Stat Points Remaining: {}",
@@ -805,22 +830,22 @@ impl App {
                     ]
                     .spacing(10)
                     .align_y(Alignment::Center),
-                    Space::new().height(8),
-                    text(format!("HP: {} / {}", save.current_hp, save.max_hp)),
-                    text(format!("Mana: {} / {}", save.current_mana, save.max_mana)),
-                    text(format!(
-                        "Stamina: {} / {}",
-                        save.current_stamina, save.max_stamina
-                    )),
-                    Space::new().height(6),
-                    text("Base Resistances").size(19),
-                    text(format!("Fire Resist: +{resistance_bonus}")),
-                    text(format!("Cold Resist: +{resistance_bonus}")),
-                    text(format!("Lightning Resist: +{resistance_bonus}")),
-                    text(format!("Poison Resist: +{resistance_bonus}")),
-                ]
-                .spacing(8)
-                .into()
+                );
+                char_col = char_col.push(Space::new().height(8));
+                char_col = char_col.push(text(format!("HP: {} / {}", save.current_hp, save.max_hp)));
+                char_col = char_col.push(text(format!("Mana: {} / {}", save.current_mana, save.max_mana)));
+                char_col = char_col.push(text(format!(
+                    "Stamina: {} / {}",
+                    save.current_stamina, save.max_stamina
+                )));
+                char_col = char_col.push(Space::new().height(6));
+                char_col = char_col.push(text("Base Resistances").size(19));
+                char_col = char_col.push(text(format!("Fire Resist: +{resistance_bonus}")));
+                char_col = char_col.push(text(format!("Cold Resist: +{resistance_bonus}")));
+                char_col = char_col.push(text(format!("Lightning Resist: +{resistance_bonus}")));
+                char_col = char_col.push(text(format!("Poison Resist: +{resistance_bonus}")));
+
+                char_col.into()
             }
             EditorLeftTab::Advanced => column![
                 text("Advanced").size(23),
