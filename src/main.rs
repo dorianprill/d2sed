@@ -454,7 +454,12 @@ impl App {
                 } else {
                     let mut path = PathBuf::from(&folder);
                     let save_result = if let AppState::Editor { save, .. } = &self.state {
-                        path.push(format!("{}.d2s", save.name));
+                        let name = if save.name.trim().is_empty() {
+                            "Unknown"
+                        } else {
+                            save.name.trim()
+                        };
+                        path.push(format!("{}.d2s", name));
                         Some(save.save_to_file(&path))
                     } else {
                         None
@@ -832,8 +837,8 @@ impl App {
                     .align_y(Alignment::Center),
                 );
                 char_col = char_col.push(Space::new().height(8));
-                char_col = char_col.push(text(format!("HP: {} / {}", save.current_hp, save.max_hp)));
-                char_col = char_col.push(text(format!("Mana: {} / {}", save.current_mana, save.max_mana)));
+                char_col = char_col.push(text(format!("Life: {} / {} (Base: {})", save.current_hp, save.max_hp, save.base_life())));
+                char_col = char_col.push(text(format!("Mana: {} / {} (Base: {})", save.current_mana, save.max_mana, save.base_mana())));
                 char_col = char_col.push(text(format!(
                     "Stamina: {} / {}",
                     save.current_stamina, save.max_stamina

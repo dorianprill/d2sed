@@ -11,8 +11,8 @@ Built as a testbed for [libd2](https://github.com/dorianprill/libd2) savegame de
 
 Tested with Diablo II Lord of Destruction 1.14d and Resurrected 3.2:
 
-- [x] Load, edit, and save legacy `.d2s` and D2R saves
-- [x] Full support for **Reign of the Warlock** (class-id 7, skill base 373)
+- [x] Load, edit, and save legacy `.d2s`, D2R, and Reign of the Warlock v105 saves
+- [x] Reign of the Warlock support for character detection, class-id 7, skill base 373, template generation, and supported stat/skill/quest/waypoint/gold edits
 - [x] Generate level 99 class templates for all classes
 - [x] Edit level, experience, core stats, stat points, skills, and skill points
 - [x] Reset stats and skills with prerequisite validation
@@ -22,8 +22,10 @@ Tested with Diablo II Lord of Destruction 1.14d and Resurrected 3.2:
 
 Not supported yet:
 
-- [ ] Item, equipment, inventory, and stash contents editing
-- [ ] Shared stash `.d2i` support
+- [ ] Item records or item properties, including equipped gear, inventory, belt, cube, personal stash, and shared stash contents
+- [ ] Followers, mercenaries, summons, corpses, Iron Golem payloads, or RotW follower block editing
+- [ ] Shared stash `.d2i` loading or saving
+- [ ] Item import/export, item generation, or low-level item bitstream editing
 
 ## Build Instructions
 

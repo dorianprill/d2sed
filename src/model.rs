@@ -7,18 +7,12 @@ use libd2::core::character_progression::{
     skill_points_from_level, stat_points_from_level,
 };
 use libd2::core::quest::{
-    self, SAVE_QUEST_SECTION_HEADER_AFTER_MARKER, SAVE_QUEST_SECTION_HEADER_BYTES,
-    SAVE_QUEST_SECTION_MARKER, SAVE_QUEST_WORDS_PER_DIFFICULTY, VISIBLE_QUEST_INDICES,
-    initial_template_quests, progression_from_quests, quest_is_completed, set_quest_completed,
-    sync_quest_progression,
+    self, SAVE_QUEST_WORDS_PER_DIFFICULTY, VISIBLE_QUEST_INDICES, initial_template_quests,
+    progression_from_quests, quest_is_completed, set_quest_completed, sync_quest_progression,
 };
 use libd2::core::skills;
-use libd2::core::version::CharacterStatus;
-use libd2::core::waypoint::{
-    self, LEGACY_WAYPOINT_BYTES_PER_DIFFICULTY, LEGACY_WAYPOINT_SECTION_HEADER_AFTER_MARKER,
-    LEGACY_WAYPOINT_SECTION_HEADER_BYTES, LEGACY_WAYPOINT_SECTION_MARKER, LEGACY_WAYPOINT_TRAILER,
-    LEGACY_WAYPOINT_TRAILER_OFFSET, WAYPOINT_COUNT,
-};
+use libd2::core::version::{CharacterStatus, ExpansionMode};
+use libd2::core::waypoint::{self, WAYPOINT_COUNT};
 use std::path::Path;
 
 #[derive(
@@ -106,7 +100,7 @@ impl Savegame {
 
         let mut game_version = GameVersion::Legacy;
         if header.version_raw >= 0x61 {
-            if class == CharacterClass::Warlock {
+            if header.expansion_mode == ExpansionMode::RotW || class == CharacterClass::Warlock {
                 game_version = GameVersion::Warlock;
             } else {
                 game_version = GameVersion::Resurrected;
@@ -173,82 +167,43 @@ impl Savegame {
     }
 
     pub fn generate_template(class: CharacterClass) -> Self {
+        let mut save = Self::generate_blank_template(class);
+
+        // Upgrade to level 99
+        save.set_level(99);
+        save.toggle_all_quests(None, true);
+        save.toggle_all_waypoints(None, true);
+
+        save.normalize_point_totals();
+        save.recalculate_vitals();
+
+        save
+    }
+
+    pub fn generate_blank_template(class: CharacterClass) -> Self {
         let base = BaseStats::for_class(class);
         let name = class.to_string();
 
-        let mut raw = vec![0u8; 0x2fd];
-        raw[0..4].copy_from_slice(&0xaa55_aa55_u32.to_le_bytes()); // D2S_MAGIC
-        raw[4..8].copy_from_slice(&0x60_u32.to_le_bytes()); // VERSION_OFFSET
-        raw[0x28] = class as u8; // LEGACY_CLASS_OFFSET
-        raw[0x2b] = 99; // LEGACY_LEVEL_OFFSET
-        raw[0x24] = 0x20; // Status: Expansion (1 << 5)
-
-        let name_bytes = name.as_bytes();
-        let len = name_bytes.len().min(15);
-        raw[0x14..0x14 + len].copy_from_slice(&name_bytes[..len]);
-
-        raw[0x29] = 0x10;
-        raw[0x2a] = 0x1e;
-        raw[0x34..0x38].fill(0xff);
-
-        // Quests
-        raw[0x14b] = 1;
-        raw[0x14f..0x14f + SAVE_QUEST_SECTION_MARKER.len()]
-            .copy_from_slice(&SAVE_QUEST_SECTION_MARKER);
-        raw[0x14f + SAVE_QUEST_SECTION_MARKER.len()..0x14f + SAVE_QUEST_SECTION_HEADER_BYTES]
-            .copy_from_slice(&SAVE_QUEST_SECTION_HEADER_AFTER_MARKER);
-
-        // Waypoints
-        raw[0x279..0x279 + LEGACY_WAYPOINT_SECTION_MARKER.len()]
-            .copy_from_slice(&LEGACY_WAYPOINT_SECTION_MARKER);
-        raw[0x279 + LEGACY_WAYPOINT_SECTION_MARKER.len()
-            ..0x279 + LEGACY_WAYPOINT_SECTION_HEADER_BYTES]
-            .copy_from_slice(&LEGACY_WAYPOINT_SECTION_HEADER_AFTER_MARKER);
-        for diff in 0..3 {
-            let offset = 0x281 + diff * LEGACY_WAYPOINT_BYTES_PER_DIFFICULTY;
-            raw[offset] = 0x02;
-            raw[offset + 1] = 0x01;
-        }
-        raw[0x279 + LEGACY_WAYPOINT_TRAILER_OFFSET] = LEGACY_WAYPOINT_TRAILER;
-
-        // NPC
-        raw[0x2ca..0x2ca + 2].copy_from_slice(b"w4");
-        raw[0x2ca + 2..0x2ca + 4].copy_from_slice(&[0x34, 0x00]); // 52 bytes len
-
-        // Append required sections: gf, if, JM, JM, jf, kf, lf
-        raw.extend_from_slice(b"gf");
-        let mut writer = crate::save::BitWriter::new();
-        writer.write_bits(0x1ff, 9);
-        raw.extend_from_slice(&writer.finish());
-
-        raw.extend_from_slice(b"if");
-        raw.extend_from_slice(&[0; 30]);
-
-        raw.extend_from_slice(b"JM\0\0JM\0\0jfkf\0");
-
-        crate::save::fix_header(&mut raw);
-        let char_file = CharacterFile::parse(raw.clone()).expect("template should be valid");
+        let char_file = CharacterFile::default_rotw(class, &name)
+            .expect("libd2 should generate valid RotW blank character");
 
         let quests = initial_template_quests();
 
-        let mut game_version = GameVersion::Legacy;
-        if class == CharacterClass::Warlock {
-            game_version = GameVersion::Warlock;
-        }
+        let game_version = GameVersion::Warlock; // Default templates to RotW
 
         Self {
             name,
             class,
-            level: 99,
-            experience: experience_for_level(99),
+            level: 1,
+            experience: 0,
             gold: 0,
             stashed_gold: 0,
             strength: base.str,
             dexterity: base.dex,
             vitality: base.vit,
             energy: base.eng,
-            stat_points_remaining: 5 * 98,
-            skill_points_remaining: 98,
+            stat_points_remaining: 0,
+            skill_points_remaining: 0,
             current_hp: base.hp,
             max_hp: base.hp,
             current_mana: base.mana,
@@ -309,7 +264,11 @@ impl Savegame {
         let status = CharacterStatus {
             hardcore: self.hardcore,
             died: self.died,
-            expansion: char_file.header().status.expansion,
+            expansion: if char_file.header().layout.uses_v105_mode_marker() {
+                false
+            } else {
+                char_file.header().status.expansion
+            },
             ladder: char_file.header().status.ladder,
         };
 
@@ -324,17 +283,39 @@ impl Savegame {
         )?;
 
         // Ensure the raw version byte is updated if upgraded
+        let current_version_raw = char_file.header().version_raw;
         let new_version_raw: u32 = match self.game_version {
             GameVersion::Legacy => 0x60,
-            GameVersion::Resurrected | GameVersion::Warlock => 0x62, // 2.5+ / 3.0+
+            GameVersion::Resurrected => {
+                if current_version_raw >= 0x61 {
+                    current_version_raw
+                } else {
+                    0x62
+                }
+            }
+            GameVersion::Warlock => {
+                if current_version_raw >= 0x69 {
+                    current_version_raw
+                } else {
+                    0x69
+                }
+            }
         };
-        // D2R uses 0x62 for V105. Legacy is usually 0x60.
-        // We only overwrite it if we are not in Legacy mode.
-        if self.game_version != GameVersion::Legacy {
+
+        if current_version_raw != new_version_raw {
             let mut raw = char_file.into_raw_bytes();
             raw[0x04..0x08].copy_from_slice(&new_version_raw.to_le_bytes());
             crate::save::fix_header(&mut raw);
             char_file = CharacterFile::parse(raw)?;
+        }
+
+        if char_file.header().layout.uses_v105_mode_marker() {
+            let expansion_mode = match self.game_version {
+                GameVersion::Warlock => ExpansionMode::RotW,
+                GameVersion::Resurrected => ExpansionMode::Expansion,
+                GameVersion::Legacy => char_file.header().expansion_mode,
+            };
+            char_file.set_expansion_mode(expansion_mode)?;
         }
 
         char_file.replace_stats_and_skills(&encoded_stats, &self.skills)?;
@@ -426,6 +407,7 @@ impl Savegame {
         self.experience = experience_for_level(self.level);
         if self.level != old_level {
             self.normalize_point_totals();
+            self.recalculate_vitals();
         }
     }
 
@@ -434,30 +416,23 @@ impl Savegame {
         if actual_amount == 0 {
             return;
         }
-        let growth = ClassGrowth::for_class(self.class);
         match stat {
             CharacterStat::Strength => self.strength += actual_amount,
             CharacterStat::Dexterity => self.dexterity += actual_amount,
             CharacterStat::Vitality => {
                 self.vitality += actual_amount;
-                self.current_hp += actual_amount * growth.whole_life_per_vitality();
-                self.max_hp += actual_amount * growth.whole_life_per_vitality();
-                self.current_stamina += actual_amount * growth.whole_stamina_per_vitality();
-                self.max_stamina += actual_amount * growth.whole_stamina_per_vitality();
             }
             CharacterStat::Energy => {
                 self.energy += actual_amount;
-                self.current_mana += actual_amount * growth.whole_mana_per_energy();
-                self.max_mana += actual_amount * growth.whole_mana_per_energy();
             }
             _ => return,
         }
         self.stat_points_remaining -= actual_amount;
+        self.recalculate_vitals();
     }
 
     pub fn decrease_stat(&mut self, stat: CharacterStat, amount: u32) {
         let base = BaseStats::for_class(self.class);
-        let growth = ClassGrowth::for_class(self.class);
         match stat {
             CharacterStat::Strength => {
                 let diff = self.strength.saturating_sub(base.str).min(amount);
@@ -472,39 +447,16 @@ impl Savegame {
             CharacterStat::Vitality => {
                 let diff = self.vitality.saturating_sub(base.vit).min(amount);
                 self.vitality -= diff;
-                self.current_hp = self
-                    .current_hp
-                    .saturating_sub(diff * growth.whole_life_per_vitality())
-                    .max(base.hp);
-                self.max_hp = self
-                    .max_hp
-                    .saturating_sub(diff * growth.whole_life_per_vitality())
-                    .max(base.hp);
-                self.current_stamina = self
-                    .current_stamina
-                    .saturating_sub(diff * growth.whole_stamina_per_vitality())
-                    .max(base.stamina);
-                self.max_stamina = self
-                    .max_stamina
-                    .saturating_sub(diff * growth.whole_stamina_per_vitality())
-                    .max(base.stamina);
                 self.stat_points_remaining += diff;
             }
             CharacterStat::Energy => {
                 let diff = self.energy.saturating_sub(base.eng).min(amount);
                 self.energy -= diff;
-                self.current_mana = self
-                    .current_mana
-                    .saturating_sub(diff * growth.whole_mana_per_energy())
-                    .max(base.mana);
-                self.max_mana = self
-                    .max_mana
-                    .saturating_sub(diff * growth.whole_mana_per_energy())
-                    .max(base.mana);
                 self.stat_points_remaining += diff;
             }
             _ => {}
         }
+        self.recalculate_vitals();
     }
 
     pub fn minimize_stat(&mut self, stat: CharacterStat) {
@@ -525,6 +477,53 @@ impl Savegame {
 
     pub fn set_stashed_gold(&mut self, stashed_gold: u32) {
         self.stashed_gold = stashed_gold.min(self.max_stash_gold());
+    }
+
+    pub fn base_life(&self) -> u32 {
+        let base = BaseStats::for_class(self.class);
+        let growth = ClassGrowth::for_class(self.class);
+        let level_bonus = growth.life_for_level(self.level);
+        let vit_bonus = growth.life_for_vitality(self.vitality, base.vit);
+
+        // Quest index 20 is Act 3 Quest 1 (The Golden Bird).
+        let golden_bird_bonus = (0..3)
+            .filter(|&diff| libd2::core::quest::quest_is_completed(self.quests[diff][20]))
+            .count() as u32
+            * 20;
+
+        base.hp + level_bonus + vit_bonus + golden_bird_bonus
+    }
+
+    pub fn base_mana(&self) -> u32 {
+        let base = BaseStats::for_class(self.class);
+        let growth = ClassGrowth::for_class(self.class);
+        let level_bonus = growth.mana_for_level(self.level);
+        let energy_bonus = growth.mana_for_energy(self.energy, base.eng);
+
+        base.mana + level_bonus + energy_bonus
+    }
+
+    pub fn base_stamina(&self) -> u32 {
+        let base = BaseStats::for_class(self.class);
+        let growth = ClassGrowth::for_class(self.class);
+        let level_bonus = growth.stamina_for_level(self.level);
+        let vit_bonus = growth.stamina_for_vitality(self.vitality, base.vit);
+
+        base.stamina + level_bonus + vit_bonus
+    }
+
+    pub fn recalculate_vitals(&mut self) {
+        let hp_diff = self.max_hp.saturating_sub(self.current_hp);
+        let mana_diff = self.max_mana.saturating_sub(self.current_mana);
+        let stamina_diff = self.max_stamina.saturating_sub(self.current_stamina);
+
+        self.max_hp = self.base_life();
+        self.max_mana = self.base_mana();
+        self.max_stamina = self.base_stamina();
+
+        self.current_hp = self.max_hp.saturating_sub(hp_diff);
+        self.current_mana = self.max_mana.saturating_sub(mana_diff);
+        self.current_stamina = self.max_stamina.saturating_sub(stamina_diff);
     }
 
     pub fn max_inventory_gold(&self) -> u32 {
@@ -643,6 +642,7 @@ impl Savegame {
                 self.stat_points_remaining += quest::stat_points_reward_for_quest(quest_idx);
             }
             sync_quest_progression(&mut self.quests[difficulty]);
+            self.recalculate_vitals();
         }
     }
 }
@@ -652,9 +652,9 @@ mod tests {
     use super::*;
     use libd2::core::quest::{
         ACT_IV_COMPLETE, ACT_V_COMPLETE, ACT_V_INTRO, DIFFICULTY_COMPLETED_WORD,
-        EVE_OF_DESTRUCTION, LEGACY_PROGRESSION_OFFSET, PRISON_OF_ICE, PROGRESSION_HELL_COMPLETED,
-        PROGRESSION_NORMAL_UNLOCKED, QUEST_LOG_CLOSED, QUEST_PRISON_OF_ICE_SCROLL_CONSUMED,
-        QUEST_REWARD_GRANTED, QUEST_REWARD_PENDING, TERRORS_END,
+        EVE_OF_DESTRUCTION, PRISON_OF_ICE, PROGRESSION_HELL_COMPLETED, PROGRESSION_NORMAL_UNLOCKED,
+        QUEST_LOG_CLOSED, QUEST_PRISON_OF_ICE_SCROLL_CONSUMED, QUEST_REWARD_GRANTED,
+        QUEST_REWARD_PENDING, TERRORS_END,
     };
 
     #[test]
@@ -667,7 +667,8 @@ mod tests {
 
     #[test]
     fn paladin_holy_shield_adds_recursive_prerequisites() {
-        let mut save = Savegame::generate_template(CharacterClass::Paladin);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Paladin);
+        save.set_level(99);
 
         save.increase_skill(21);
 
@@ -684,7 +685,8 @@ mod tests {
 
     #[test]
     fn advanced_skill_requires_enough_points_for_prerequisites() {
-        let mut save = Savegame::generate_template(CharacterClass::Paladin);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Paladin);
+        save.set_level(99);
         save.skill_points_remaining = 4;
 
         assert!(!save.can_increase_skill(21));
@@ -696,7 +698,8 @@ mod tests {
 
     #[test]
     fn last_prerequisite_point_cannot_be_removed_while_dependent_is_allocated() {
-        let mut save = Savegame::generate_template(CharacterClass::Paladin);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Paladin);
+        save.set_level(99);
         save.increase_skill(21);
 
         assert!(!save.can_decrease_skill(1));
@@ -708,7 +711,8 @@ mod tests {
 
     #[test]
     fn extra_prerequisite_points_can_be_removed_back_to_one() {
-        let mut save = Savegame::generate_template(CharacterClass::Paladin);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Paladin);
+        save.set_level(99);
         save.increase_skill(21);
         save.increase_skill(1);
 
@@ -721,7 +725,9 @@ mod tests {
 
     #[test]
     fn level_min_and_max_recompute_remaining_points() {
-        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Amazon);
+        save.game_version = GameVersion::Legacy;
+        save.set_level(99);
         save.increase_stat(CharacterStat::Strength, 10);
         save.increase_skill(0);
 
@@ -745,28 +751,28 @@ mod tests {
 
     #[test]
     fn stat_min_and_max_move_points_between_stat_and_pool() {
-        let mut save = Savegame::generate_template(CharacterClass::Sorceress);
-        let base = BaseStats::for_class(CharacterClass::Sorceress);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Sorceress);
+        save.set_level(99);
+        let base_mana = save.base_mana();
         save.stat_points_remaining = 20;
 
         save.maximize_stat(CharacterStat::Energy);
 
-        assert_eq!(save.energy, base.eng + 20);
-        assert_eq!(save.current_mana, base.mana + 40);
-        assert_eq!(save.max_mana, base.mana + 40);
+        assert_eq!(save.current_mana, base_mana + 40);
+        assert_eq!(save.max_mana, base_mana + 40);
         assert_eq!(save.stat_points_remaining, 0);
 
         save.minimize_stat(CharacterStat::Energy);
 
-        assert_eq!(save.energy, base.eng);
-        assert_eq!(save.current_mana, base.mana);
-        assert_eq!(save.max_mana, base.mana);
+        assert_eq!(save.current_mana, base_mana);
+        assert_eq!(save.max_mana, base_mana);
         assert_eq!(save.stat_points_remaining, 20);
     }
 
     #[test]
     fn point_normalization_preserves_loaded_allocations() {
-        let mut save = Savegame::generate_template(CharacterClass::Paladin);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Paladin);
+        save.set_level(99);
         save.strength += 25;
         save.dexterity += 10;
         save.skills[0] = 1;
@@ -793,7 +799,8 @@ mod tests {
 
     #[test]
     fn loaded_over_budget_allocations_are_preserved_with_zero_remaining_points() {
-        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Amazon);
+        save.game_version = GameVersion::Legacy;
         save.set_level(1);
         save.strength += 25;
         save.skills[0] = 1;
@@ -811,7 +818,8 @@ mod tests {
 
     #[test]
     fn base_resistance_bonus_tracks_consumed_resistance_scrolls() {
-        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Amazon);
+        save.game_version = GameVersion::Legacy;
 
         assert_eq!(
             quest::consumed_resistance_scrolls(&save.quests),
@@ -838,7 +846,9 @@ mod tests {
 
     #[test]
     fn completing_reward_quest_grants_reward_without_leaving_it_pending() {
-        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Amazon);
+        save.game_version = GameVersion::Legacy;
+        save.set_level(99);
 
         save.toggle_quest(0, 25);
 
@@ -850,7 +860,8 @@ mod tests {
 
     #[test]
     fn toggle_all_quests_sets_hidden_act_progression_words() {
-        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Amazon);
+        save.game_version = GameVersion::Legacy;
 
         save.toggle_all_quests(None, true);
 
@@ -884,7 +895,8 @@ mod tests {
 
     #[test]
     fn prison_of_ice_completion_marks_resistance_scroll_consumed() {
-        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Amazon);
+        save.game_version = GameVersion::Legacy;
 
         save.toggle_quest(0, PRISON_OF_ICE);
 
@@ -903,7 +915,8 @@ mod tests {
 
     #[test]
     fn to_bytes_sanitizes_old_pending_reward_bits_and_syncs_progression() {
-        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Amazon);
+        save.game_version = GameVersion::Legacy;
         save.quests[0][25] = QUEST_REWARD_GRANTED | QUEST_REWARD_PENDING | QUEST_LOG_CLOSED;
         save.quests[0][TERRORS_END] = QUEST_REWARD_GRANTED | QUEST_REWARD_PENDING;
         save.quests[0][EVE_OF_DESTRUCTION] = QUEST_REWARD_GRANTED | QUEST_REWARD_PENDING;
@@ -924,21 +937,22 @@ mod tests {
         assert_eq!(quests[0][ACT_V_INTRO], QUEST_REWARD_GRANTED);
         assert_eq!(quests[0][ACT_V_COMPLETE], DIFFICULTY_COMPLETED_WORD);
         assert_eq!(
-            bytes[LEGACY_PROGRESSION_OFFSET],
+            bytes[0x15], // D2R_V105_PROGRESSION_OFFSET
             PROGRESSION_NORMAL_UNLOCKED
         );
     }
 
     #[test]
     fn to_bytes_sets_progression_for_completed_difficulties() {
-        let mut save = Savegame::generate_template(CharacterClass::Amazon);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Amazon);
+        save.game_version = GameVersion::Legacy;
 
         save.toggle_all_quests(None, true);
 
         let bytes = save.to_bytes().expect("template should serialize");
         let quests = quest_words(&bytes);
 
-        assert_eq!(bytes[LEGACY_PROGRESSION_OFFSET], PROGRESSION_HELL_COMPLETED);
+        assert_eq!(bytes[0x15], PROGRESSION_HELL_COMPLETED);
         for difficulty in &quests {
             assert_eq!(difficulty[ACT_V_COMPLETE], DIFFICULTY_COMPLETED_WORD);
             assert_eq!(
@@ -950,7 +964,8 @@ mod tests {
 
     #[test]
     fn gold_setters_clamp_to_legacy_caps() {
-        let mut save = Savegame::generate_template(CharacterClass::Necromancer);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Necromancer);
+        save.set_level(99);
 
         save.set_gold(9_999_990);
         save.set_stashed_gold(9_999_999);
@@ -966,7 +981,8 @@ mod tests {
 
     #[test]
     fn to_bytes_serializes_clamped_gold_values() {
-        let mut save = Savegame::generate_template(CharacterClass::Necromancer);
+        let mut save = Savegame::generate_blank_template(CharacterClass::Necromancer);
+        save.set_level(99);
         save.gold = 9_999_990;
         save.stashed_gold = 9_999_999;
 
@@ -977,6 +993,39 @@ mod tests {
             stat_value(&bytes, CharacterStat::StashedGold),
             Some(2_500_000)
         );
+    }
+
+    #[test]
+    fn rotw_template_serializes_native_v105_signatures() {
+        let save = Savegame::generate_template(CharacterClass::Amazon);
+
+        let bytes = save.to_bytes().expect("template should serialize");
+        let parsed = CharacterFile::parse(bytes.clone()).expect("serialized template parses");
+
+        assert_eq!(parsed.header().expansion_mode, ExpansionMode::RotW);
+        assert_eq!(bytes[0x14], 0x00);
+        assert_eq!(bytes[0x19..0x1b], [0x10, 0x1e]);
+        assert_eq!(bytes[0x24..0x28], [0xff, 0xff, 0xff, 0xff]);
+        assert_eq!(bytes[0x00f8], ExpansionMode::V105_ROTW_MARKER);
+        assert_eq!(
+            bytes[0x02bd..0x02c5],
+            [0x57, 0x53, 0x01, 0x00, 0x00, 0x00, 0x50, 0x00]
+        );
+        assert_eq!(bytes[0x030d..0x0311], [0x01, 0x77, 0x34, 0x00]);
+        assert!(bytes.ends_with(&[
+            0x4a, 0x4d, 0x00, 0x00, 0x6a, 0x66, 0x6b, 0x66, 0x00, 0x01, 0x00, 0x6c, 0x66, 0x00,
+            0x00,
+        ]));
+    }
+
+    #[test]
+    fn sorceress_template_uses_fresh_rotw_strength() {
+        let save = Savegame::generate_blank_template(CharacterClass::Sorceress);
+
+        assert_eq!(save.strength, 10);
+
+        let bytes = save.to_bytes().expect("template should serialize");
+        assert_eq!(stat_value(&bytes, CharacterStat::Strength), Some(10));
     }
 
     fn quest_words(bytes: &[u8]) -> [[u16; SAVE_QUEST_WORDS_PER_DIFFICULTY]; 3] {
@@ -1017,15 +1066,5 @@ mod tests {
             }
         }
         Some(value)
-    }
-
-    #[test]
-    fn generate_warlock_fixture() {
-        let mut save = Savegame::generate_template(CharacterClass::Warlock);
-        save.game_version = GameVersion::Warlock;
-        save.set_level(1);
-        std::fs::create_dir_all("../save").unwrap_or(());
-        save.save_to_file("../save/Warlock.d2s")
-            .expect("Failed to save Warlock.d2s fixture");
     }
 }
