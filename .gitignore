@@ -1,1 +1,6 @@
 /target
+
+# Local save samples and generated binary analysis output are not source files.
+analysis/
+*.d2s
+*.d2i

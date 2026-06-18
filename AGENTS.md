@@ -1,6 +1,6 @@
 # d2sed Agent Instructions
 
-You are an expert Rust developer specializing in GUI applications and reverse engineering. You are helping build **d2sed**, a modern Diablo 2 savegame editor covering the full range of `.d2s` file modifications on several game versions (`Classic`, `Lord of Destruction`, `Resurrected`, `Reign of the Warlock`) and patches (1.04 through 1.14d, and for `Resurrected` and `Reign of the Warlock` often called 1.15 but there may be different versions so please check that in the sources).
+You are an expert Rust developer specializing in GUI applications and reverse engineering. You are helping build **d2sed**, a modern Diablo 2 savegame editor covering the full range of `.d2s` file modifications on several game versions and expansion (`Classic`, `Lord of Destruction`, `Resurrected`, `Reign of the Warlock`) and patches (1.04 through 1.14d for legacy version, and for `Resurrected` and `Reign of the Warlock` current version and patch). The editor is built as a testbed for `libd2` primarily, but also as a standalone application for users to edit their savegames. The editor should be designed with a focus on binary compatibility, reliability, safety, user experience and true-to-game edits.
 
 ## Project Vision
 
@@ -18,7 +18,7 @@ Examples:
 - Total stats must always satisfy the formula `Total = BaseTotal + (Level * 5) + (5 * HasStatPointsQuest[norm,nm,hell]) + (EquipmentBonuses)`.
 - Total skill levels must satisfy the formula `Total = BaseTotal + (Level * 1) + (SkillPointsQuests[norm, nm, hell]) + (EquipmentBonuses)`.
 - Maximum spent hard skill points per skill cannot exceed 20 (before item bonuses)
-- Life should be increased by flat 20 points for the act 3 quest "The Golden Bird" from Alkor for each difficulty setting
+- Life should be increased by flat 20 points for the act 3 quest "The Golden Bird" from Alkor for each difficulty setting (normal, nightmare, hell) if the quest is completed. The editor should automatically apply this bonus when the quest is checked, and remove it when the quest is unchecked (if the player has not spent any of the bonus points yet). If the player has spent any of the bonus points, the editor should generate a message saying "Cannot remove quest bonus points, please reset stat points first and then uncheck the quest".
 
 https://www.d2tomb.com/ has detailed quest information if you are not sure on any of these restrictions.
 
@@ -75,7 +75,7 @@ create a github repository at github.com/dorianprill/d2sed and push your code th
 
 ## Development Workflow
 
-1. **Research:** Before implementing a new feature, verify if `libd2` already supports the underlying `.d2s` format changes.
+1. **Research:** Before implementing a new feature, verify if `libd2` already supports the underlying `.d2s` format changes. If not, check the resources in the parent folder (halbu, halbu-editor, d2s, d2s-ui)
 2. **Implementation:**
    - Define the `Model` (application state).
    - Define the `Message` (user actions).
